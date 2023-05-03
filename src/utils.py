@@ -70,7 +70,7 @@ def set_weight(tree, id, newval):
     elm.set("weight", newval)
     return tree
 
-def get_tol_and_weight(tree, id:str):
+def get_tol(tree, id:str):
     """
     Get tolerance and weight of a feature
     :param tree: tree of Phar file
@@ -80,11 +80,11 @@ def get_tol_and_weight(tree, id:str):
     elm = tree.find(".//*[@featureId='"+str(id)+"']")
     if (elm.get("name") == "H") or (elm.get("type") == "exclusion"):
         child = elm.find("./position")
-        return child.get("tolerance"), elm.get("weight")
+        return float(child.get("tolerance"))
     else:
         child_target = elm.find("./target")
         child_origin = elm.find("./origin")
-        return child_target.get('tolerance'), child_origin.get('tolerance'), elm.get('weight')
+        return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
 
 
 def action_execution(action, featureIds, tree):
@@ -97,31 +97,28 @@ def action_execution(action, featureIds, tree):
     :param action: action to execute
     :return: Path to modified Phar file
     """
-    H = len(featureIds[0])*4
-    HBA = len(featureIds[1])*6
-    HBD = len(featureIds[2])*6
+    Hm = 2
+    HBAm = 4
+    HBDm = 4
+    H = len(featureIds[0])*Hm
+    HBA = len(featureIds[1])*HBAm
+    HBD = len(featureIds[2])*HBDm
 
     if action < H:
-        d = action // 4 #feature number
-        r = action % 4 #0: tol+, 1: tol-, 2: weight+, 3: weight-
+        d = action // Hm #feature number
+        r = action % Hm #0: tol+, 1: tol-
         feature = featureIds[0][d] #feature id
         return executor(r, feature, tree)
     if action >= H and action < H + HBA:
-        d = (action-H) // 6 #feature number
-        r = (action-H) % 6 #0: tol+, 1: tol-, 2: tol+, 3: tol-, 4: weight+, 5: weight-
+        d = (action-H) // HBAm #feature number
+        r = (action-H) % HBAm #0: tol+, 1: tol-, 2: tol+, 3: tol-
         feature = featureIds[1][d] #feature id
         return executor(r, feature, tree, True)
-    if action >= H + HBA and action < H + HBA + HBD:
-        d = (action-H-HBA) // 6 #feature number
-        r = (action-H-HBA) % 6 #0: tol+, 1: tol-, 2: tol+, 3: tol-, 4: weight+, 5: weight-
+    if action >= H + HBA:
+        d = (action-H-HBA) // HBDm #feature number
+        r = (action-H-HBA) % HBDm #0: tol+, 1: tol-, 2: tol+, 3: tol-
         feature = featureIds[2][d] #feature id
         return executor(r, feature, tree, True)
-    if action >= H + HBA + HBD:
-        d = (action-H-HBA-HBD) // 4
-        r = (action-H-HBA-HBD) % 4
-        feature = featureIds[3][d]
-        return executor(r, feature, tree)
-    
 
 def executor(r, feature, tree, f=False):
     """
@@ -131,7 +128,7 @@ def executor(r, feature, tree, f=False):
     :return: modified tree
     """
     if f:
-        tol_target, tol_origin, weight = get_tol_and_weight(tree, feature)
+        tol_target, tol_origin = get_tol(tree, feature)
         match r:
             case 0:
                 return set_tol(tree, feature, (float(tol_origin) + 0.15), target="origin")
@@ -141,18 +138,14 @@ def executor(r, feature, tree, f=False):
                 return set_tol(tree, feature, (float(tol_target) + 0.15), target="target")
             case 3:
                 return set_tol(tree, feature, (float(tol_target) - 0.15), target="target")
-            case 4:
-                return set_weight(tree, feature, (float(weight) + 0.15))
-            case 5:
-                return set_weight(tree, feature, (float(weight) - 0.15))
+
     else:
-        tol, weight = get_tol_and_weight(tree, feature)
+        tol = get_tol(tree, feature)
         match r:
             case 0:
                 return set_tol(tree, feature, (float(tol) + 0.15))
             case 1:
                 return set_tol(tree, feature, (float(tol) - 0.15))
-            case 2:
-                return set_weight(tree, feature, (float(weight) + 0.15))
-            case 3:
-                return set_weight(tree, feature, (float(weight) - 0.15))
+    
+    raise ValueError("No valid action specified")
+

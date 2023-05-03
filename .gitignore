@@ -129,6 +129,7 @@ env.bak/
 venv.bak/
 wandb/
 data/
+runs/
 
 # Spyder project settings
 .spyderproject

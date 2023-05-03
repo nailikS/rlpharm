@@ -15,8 +15,8 @@ class PharmacophoreEnv(gym.Env):
         # They must be gym.spaces objects
         # Example when using discrete actions:
         self.features = features.split(",")       
-        self.bounds = {"H": [1, 4], "HBA": [1, 5], "HBD": [1, 5], "exclusion": [0, 10], "WGHT": [0.1, 3]}
-        self.codec = {0:"H", 1:"HBA", 2:"HBD", 3:"exclusion"}
+        self.bounds = {"H": [1, 4], "HBA": [1, 5], "HBD": [1, 5]}
+        self.codec = {0:"H", 1:"HBA", 2:"HBD"}
         self.threshold = 10 # threshold for reward, TODO: make this a parameter
         self.out_file = output
         self.querys = querys
@@ -33,9 +33,9 @@ class PharmacophoreEnv(gym.Env):
         anvec = 0
         for i in range(len(self.featureIds)): 
             if i==0 or i==3:
-                anvec += len(self.featureIds[i]*4)
+                anvec += len(self.featureIds[i]*2)
             if i==1 or i==2:
-                anvec += len(self.featureIds[i]*6)
+                anvec += len(self.featureIds[i]*4)
         
         # Initialization of Spaces
         self.action_space = spaces.Discrete(anvec)
@@ -103,18 +103,15 @@ class PharmacophoreEnv(gym.Env):
             x = []
             for id in self.featureIds[i]:
                 if initial:
-                    x.extend(utils.get_tol_and_weight(self.phar, id))
+                    x.extend([utils.get_tol(self.phar, id)])
                 else:
-                    x.extend(utils.get_tol_and_weight(self.phar_modified, id))
-            os_space[f] = np.array(x, dtype=np.float32)
+                    x.extend([utils.get_tol(self.phar_modified, id)])
+            x = np.array(x, dtype=np.float32)
+            os_space[f] = x.flatten()
         return os_space
 
     def get_observation_space(self):
-        wght_low = self.bounds["WGHT"][0]
-        wght_up = self.bounds["WGHT"][1]
         d = self.bounds.copy()
-        d.popitem()
-        d.popitem() # removing exclusion and weight from dict
         for i in range(len(self.featureIds)):
             feature = self.features[i]
             lower = self.bounds[feature][0]
@@ -123,14 +120,14 @@ class PharmacophoreEnv(gym.Env):
             down = []
             if feature == "H": # or feature == "exclusion" 
                 for _ in self.featureIds[i]:
-                    up.extend([upper, wght_up])
-                    down.extend([lower, wght_low])
-                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*2,), dtype=np.float32)
+                    up.extend([upper])
+                    down.extend([lower])
+                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i]),), dtype=np.float32)
             if feature == "HBA" or feature == "HBD":
                 for _ in self.featureIds[i]:
-                    up.extend([upper, upper, wght_up])
-                    down.extend([lower, lower, wght_low])
-                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*3,), dtype=np.float32)
+                    up.extend([upper, upper])
+                    down.extend([lower, lower])
+                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*2,), dtype=np.float32)
         return d
 
     def read_featureIds(self):
