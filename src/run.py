@@ -14,13 +14,13 @@ register(
     # path to the class for creating the env
     entry_point="customenv:PharmacophoreEnv",
     # Max number of steps per episode, using a `TimeLimitWrapper`
-    kwargs={"output":r'C:\Users\kilia\MASTER\data\hitlists\hitlist', 
-    "querys":r'C:\Users\kilia\MASTER\V2Z1551.pml', 
-    "actives_db":r'C:\Users\kilia\MASTER\data\seh_actives_mini.ldb', 
-    "inactives_db":r"C:\Users\kilia\MASTER\data\seh_inactives_mini.ldb",
-    "ldba":36,
-    "ldbi":112,
-    "features":"H,HBA,HBD"},
+    kwargs={"output": r'C:\Users\kilia\MASTER\rlpharm\data\hitlists\hitlist', 
+            "querys": r'C:\Users\kilia\MASTER\V2Z1551.pml', 
+            "actives_db": r'C:\Users\kilia\MASTER\rlpharm\data\seh_actives_mini.ldb',
+            "inactives_db": r"C:\Users\kilia\MASTER\rlpharm\data\seh_inactives_mini.ldb",
+            "ldba": 36,
+            "ldbi": 112,
+            "features": "H,HBA,HBD"},
 )
 
 env = gym.make("PharmacophoreEnv-v0")

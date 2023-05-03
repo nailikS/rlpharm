@@ -12,7 +12,7 @@ def exec_vhts(output_file, querys, actives_db, inactives_db):
     """
     datestring = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
     output_file = output_file + '-{}.sdf'.format(datestring)  
-    subprocess.call([r'C:\Users\kilia\MASTER\data\screen.bat', querys, output_file, actives_db, inactives_db], start_new_session=True)
+    subprocess.call([r'C:\Users\kilia\MASTER\rlpharm\src\screen.bat', querys, output_file, actives_db, inactives_db], start_new_session=True)
     poshits = 0
     neghits = 0
     with open(file=output_file, mode='r') as f:
