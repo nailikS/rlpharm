@@ -80,16 +80,16 @@ class PharmacophoreEnv(gym.Env):
             terminated = False
         
         # new observation (state)
-        obs = self.get_observation(initial=False)
+        self.last_observation = self.get_observation(initial=False)
         
         # changes made to the pharmacophore in total, returned in info
         diff = {}
         if self.counter % 10 == 0:
-            for key in obs.keys():
-                diff[key] = np.subtract(obs[key], self.initial_os[key])
+            for key in self.last_observation.keys():
+                diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])
 
         self.counter += 1
-        return obs, self.reward, terminated, truncated, {"performance": self.reward, "diff": diff}
+        return self.last_observation, self.reward, terminated, truncated, {"performance": self.reward, "diff": diff}
     
     def reset(self, seed=None, options=None):
         # Reset the state of the environment to an initial state
