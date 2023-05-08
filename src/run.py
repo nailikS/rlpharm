@@ -16,7 +16,7 @@ register(
     entry_point="customenv:PharmacophoreEnv",
     # Max number of steps per episode, using a `TimeLimitWrapper`
     kwargs={"output": r'C:\Users\kilia\MASTER\rlpharm\data\hitlists\hitlist', 
-            "querys": r'C:\Users\kilia\MASTER\V2Z1551.pml', 
+            "querys": r'C:\Users\kilia\MASTER\rlpharm\data\querys\sEH-1ZD5_mod5_LS_3.02.pml', 
             "actives_db": r'C:\Users\kilia\MASTER\rlpharm\data\seh_actives_mini.ldb',
             "inactives_db": r"C:\Users\kilia\MASTER\rlpharm\data\seh_inactives_mini.ldb",
             "ldba": 36,
@@ -25,15 +25,15 @@ register(
 )
 
 env = gym.make("PharmacophoreEnv-v0")
-#env = Monitor(env, filename="./logs")
+env = Monitor(env)
 
 # Separate evaluation env
-eval_env = gym.make("Pendulum-v1")
+#eval_env = gym.make("PharmacophoreEnv-v0")
 # Stop training if there is no improvement after more than 3 evaluations
-stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
-eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_train_callback, verbose=1)
+#stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
+#eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_train_callback, verbose=1)
 
-config = {"policy_type": "MultiInputPolicy", "total_timesteps": 500000}
+config = {"policy_type": "MultiInputPolicy", "total_timesteps": 50000}
 experiment_name = f"PPO_{int(time.time())}"
 
 

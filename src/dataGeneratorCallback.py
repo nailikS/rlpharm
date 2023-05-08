@@ -11,27 +11,30 @@ class CustomCallback(BaseCallback):
         
     def _on_training_start(self) -> None:
         
-        header = ['Step', 'Reward']
-        for i in range(10):
+        header = ['Reward']
+        for i in range(len(self.getValues())):
             header.append(f"Feature{i}")
         with open(self.csv_file, 'w') as f:
             writer = csv.writer(f)
             writer.writerow(header)
         
     def _on_step(self) -> bool:
-        step = self.num_timesteps
+        reward = self.locals['rewards'][0]
+        flat_obs = self.getValues()
+        with open(self.csv_file, 'a') as f:
+            writer = csv.writer(f)
+            new = [reward]
+            new.extend(map(str, flat_obs))
+            writer.writerow(new)
+        return True
+
+    def getValues(self):
+        values = []
         if isinstance(self.training_env, VecEnv):
             obs = np.array(self.training_env.get_attr('last_observation'))
         else:
             obs = np.array(self.training_env.envs[0].last_observation)
-        reward = self.locals['rewards'][0]
-        flat_obs = []
         for key in obs[0].keys():
-            flat_obs.extend(obs[0][key])
-        #print(f"Step: {step}, Observation: {flat_obs}, Reward: {reward}")
-        with open(self.csv_file, 'a') as f:
-            writer = csv.writer(f)
-            new = [step, reward]
-            new.extend(map(str, flat_obs))
-            writer.writerow(new)
-        return True
+            values.extend(obs[0][key])
+        
+        return values

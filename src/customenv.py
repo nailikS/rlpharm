@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 import utils
-
+import csv
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -15,9 +15,14 @@ class PharmacophoreEnv(gym.Env):
         # They must be gym.spaces objects
         # Example when using discrete actions:
         self.features = features.split(",")       
-        self.bounds = {"H": [1, 4], "HBA": [1, 5], "HBD": [1, 5]}
-        self.codec = {0:"H", 1:"HBA", 2:"HBD"}
-        self.threshold = 10 # threshold for reward, TODO: make this a parameter
+        self.bounds = {"H":np.array([1, 5], dtype=np.float32), 
+                       "HBA":np.array([1, 5], dtype=np.float32), 
+                       "HBD":np.array([1, 5], dtype=np.float32),
+                       }
+        self.codec = {0:"H", 
+                      1:"HBA", 
+                      2:"HBD"}
+        self.threshold = 20 # threshold for reward, TODO: make this a parameter
         self.out_file = output
         self.querys = querys
         self.actives_db = actives_db+":active"
@@ -54,7 +59,13 @@ class PharmacophoreEnv(gym.Env):
                                              querys=self.temp_querys, 
                                              actives_db=self.actives_db, 
                                              inactives_db=self.inactives_db)
-        # TODO: calculate score
+        return self.scoring(actives, inactives)
+    
+    def scoring(self, actives, inactives):
+        """
+        Calculate score
+        :return: score query pharmacophores against actives and inactives database        
+        """       
         if actives == 0:
             return 0
         EF = (actives/(actives+inactives))/(self.ldba_size/(self.ldba_size+self.ldbi_size))
@@ -62,22 +73,19 @@ class PharmacophoreEnv(gym.Env):
             inactives = 1
         score = (EF + actives) / (inactives)
         return score
-
+    
     def step(self, action):
         # Execute one time step within the environment
-        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar)
+        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified)
         
         # Evaluate and calculate reward
         self.reward = self.screen()
         
-        # Always False, not needed for now
-        truncated = False
-        
         # Episode termination conditions
-        if self.reward > self.threshold or self.counter == 200:
-            terminated = True
-        else: 
-            terminated = False
+        terminated = self.reward > self.threshold
+        
+        # Truncated if episode exceeds timestep limit
+        truncated = self.counter > 200
         
         # new observation (state)
         self.last_observation = self.get_observation(initial=False)
@@ -88,14 +96,27 @@ class PharmacophoreEnv(gym.Env):
             for key in self.last_observation.keys():
                 diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])
 
+        # check boundaries
+        for key in self.last_observation.keys():
+            if terminated == True:
+                break
+            print(str(self.last_observation[key]) + '>=' + str(self.bounds[key][0])) 
+            terminated = not(np.all(np.logical_and(self.last_observation[key] >= self.bounds[key][0], self.last_observation[key] <= self.bounds[key][1])))
+        
+        if terminated == True:
+            self.reward = 0
+            print("\n" + '\033[93m' + 'bounds violated' + '\033[0m' + "\n")
+        
         self.counter += 1
+        
         return self.last_observation, self.reward, terminated, truncated, {"performance": self.reward, "diff": diff}
     
     def reset(self, seed=None, options=None):
         # Reset the state of the environment to an initial state
         self.reward = self.screen()
         self.counter = 0
-        return self.get_observation(initial=True), {}
+        self.last_observation = self.get_observation(initial=True)
+        return self.last_observation, {}
     
     def get_observation(self, initial=False):
         os_space = dict()
@@ -141,6 +162,66 @@ class PharmacophoreEnv(gym.Env):
                 for elm in self.phar.findall(".//*[@type='"+self.features[i]+"']"):
                     featureIds[i].append(elm.get("featureId"))
         self.featureIds = featureIds
+
+    def generate_examples(self, n=None, csv_file="examples.csv"):
+        if n == None:
+            n = 1000
+        temp_querys = self.querys[:-4]+"_temp"+self.querys[-4:]
+        initial_observation, info = self.reset()
+        observation = initial_observation.copy()
+        modified_phar = utils.read_pharmacophores(self.querys)
+        for i in range(n):
+            if i == 0:
+                header = ['Reward']
+                values = []
+                for key in initial_observation.keys():
+                    values.extend(initial_observation[key])
+                for i in range(len(values)):
+                    header.append(f"Feature{i}")
+                with open(csv_file, 'w') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(header)
+
+            action = self.action_space.sample()
+             # Execute one time step within the environment
+            modified_phar = utils.action_execution(action, self.featureIds, modified_phar)
+            modified_phar.write(temp_querys, encoding="utf-8", xml_declaration=True)
+            # Evaluate and calculate reward
+            reward = self.scoring(*utils.exec_vhts(output_file=self.out_file, 
+                                                   querys=temp_querys, 
+                                                   actives_db=self.actives_db, 
+                                                   inactives_db=self.inactives_db))
+            
+            for i, f in zip(range(len(self.featureIds)),self.features):
+                x = []
+                for id in self.featureIds[i]:
+                    x.extend([utils.get_tol(modified_phar, id)])
+                x = np.array(x, dtype=np.float32)
+                observation[f] = x.flatten()
+            print(observation)
+            
+            terminated = []
+            for key in observation.keys():
+                terminated.append(not np.logical_and(np.all(observation[key] >= 1), 
+                                                     np.all(observation[key] <= 5)))
+            if any(terminated):
+                print('problem')
+                observation = initial_observation.copy()
+                modified_phar = utils.read_pharmacophores(self.querys)
+            else:
+                values =[]
+                for key in observation.keys():
+                        values.extend(observation[key])
+                
+                with open(csv_file, 'a') as f:
+                    writer = csv.writer(f)
+                    new = [reward]
+                    new.extend(map(str, values))
+                    writer.writerow(new)
+            
+            
+
+
 
     def render(self, mode="console"):
         ...
