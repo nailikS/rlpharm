@@ -3,18 +3,35 @@ import numpy as np
 from gymnasium import spaces
 import utils
 import csv
+import torch
+import torch.nn as nn
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
 
     #metadata = {"render.modes": ["console"], "features":{0:"H", 1:"HBA", 2:"HBD", 3:"exclusion"}}
 
-    def __init__(self, output, querys, actives_db, inactives_db, ldba, ldbi, features):
+    def __init__(self, output, querys, actives_db, inactives_db, approximator, ldba, ldbi, features, enable_approximator=False):
         super().__init__()
         # Define action and observation space
         # They must be gym.spaces objects
         # Example when using discrete actions:
-        self.features = features.split(",")       
+        self.enable_approximator = enable_approximator
+        self.approximator = nn.Sequential(
+                                nn.Linear(7, 96),
+                                nn.ReLU(),
+                                nn.Linear(96, 192),
+                                nn.ReLU(),
+                                nn.Linear(192, 96),
+                                nn.ReLU(),
+                                nn.Linear(96, 48),
+                                nn.ReLU(),
+                                nn.Linear(48, 24),
+                                nn.ReLU(),
+                                nn.Linear(24, 1),
+                            )
+        self.approximator.load_state_dict(torch.load(approximator))
+        self.features = features.split(",")
         self.bounds = {"H":np.array([1, 5], dtype=np.float32), 
                        "HBA":np.array([1, 5], dtype=np.float32), 
                        "HBD":np.array([1, 5], dtype=np.float32),
@@ -51,7 +68,13 @@ class PharmacophoreEnv(gym.Env):
         Execute VHTS and calculate score
         :return: score query pharmacophores against actives and inactives database        
         """
-        score = 0
+        if self.enable_approximator:
+            obs = self.initial_os if self.counter == 0 else self.last_observation
+            values =[]
+            for key in obs.keys():
+                values.extend(obs[key])
+            with torch.no_grad():
+                return self.approximator(torch.tensor(values, dtype=torch.float32))
         # currently for one pharmacophore at a time
         self.temp_querys = self.querys[:-4]+"_temp"+self.querys[-4:]
         self.phar_modified.write(self.temp_querys, encoding="utf-8", xml_declaration=True)
@@ -78,6 +101,9 @@ class PharmacophoreEnv(gym.Env):
         # Execute one time step within the environment
         self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified)
         
+        # new observation (state)
+        self.last_observation = self.get_observation(initial=False)
+
         # Evaluate and calculate reward
         self.reward = self.screen()
         
@@ -87,9 +113,6 @@ class PharmacophoreEnv(gym.Env):
         # Truncated if episode exceeds timestep limit
         truncated = self.counter > 200
         
-        # new observation (state)
-        self.last_observation = self.get_observation(initial=False)
-        
         # changes made to the pharmacophore in total, returned in info
         diff = {}
         if self.counter % 10 == 0:
@@ -97,24 +120,21 @@ class PharmacophoreEnv(gym.Env):
                 diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])
 
         # check boundaries
+        terminated = []
         for key in self.last_observation.keys():
-            if terminated == True:
-                break
-            print(str(self.last_observation[key]) + '>=' + str(self.bounds[key][0])) 
-            terminated = not(np.all(np.logical_and(self.last_observation[key] >= self.bounds[key][0], self.last_observation[key] <= self.bounds[key][1])))
-        
-        if terminated == True:
+            terminated.append(not np.logical_and(np.all(self.last_observation[key] >= 1), 
+                                                 np.all(self.last_observation[key] <= 5)))
+        if np.any(terminated):
             self.reward = 0
-            print("\n" + '\033[93m' + 'bounds violated' + '\033[0m' + "\n")
         
         self.counter += 1
         
-        return self.last_observation, self.reward, terminated, truncated, {"performance": self.reward, "diff": diff}
+        return self.last_observation, self.reward, np.any(terminated), truncated, {"performance": self.reward, "diff": diff}
     
     def reset(self, seed=None, options=None):
         # Reset the state of the environment to an initial state
-        self.reward = self.screen()
         self.counter = 0
+        self.reward = self.screen()
         self.last_observation = self.get_observation(initial=True)
         return self.last_observation, {}
     
@@ -198,14 +218,12 @@ class PharmacophoreEnv(gym.Env):
                     x.extend([utils.get_tol(modified_phar, id)])
                 x = np.array(x, dtype=np.float32)
                 observation[f] = x.flatten()
-            print(observation)
             
             terminated = []
             for key in observation.keys():
                 terminated.append(not np.logical_and(np.all(observation[key] >= 1), 
                                                      np.all(observation[key] <= 5)))
             if any(terminated):
-                print('problem')
                 observation = initial_observation.copy()
                 modified_phar = utils.read_pharmacophores(self.querys)
             else:

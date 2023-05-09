@@ -8,6 +8,7 @@ from gymnasium.envs.registration import register
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement
 import dataGeneratorCallback as dgc
+from stable_baselines3.common.env_util import make_vec_env
 
 register(
     # unique identifier for the env `name-version`
@@ -19,14 +20,16 @@ register(
             "querys": r'C:\Users\kilia\MASTER\rlpharm\data\querys\sEH-1ZD5_mod5_LS_3.02.pml', 
             "actives_db": r'C:\Users\kilia\MASTER\rlpharm\data\seh_actives_mini.ldb',
             "inactives_db": r"C:\Users\kilia\MASTER\rlpharm\data\seh_inactives_mini.ldb",
+            "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
             "ldba": 36,
             "ldbi": 112,
-            "features": "H,HBA,HBD"},
+            "features": "H,HBA,HBD",
+            "enable_approximator": True},
 )
 
 env = gym.make("PharmacophoreEnv-v0")
 env = Monitor(env)
-
+vec_env = make_vec_env("PharmacophoreEnv-v0", n_envs=6)
 # Separate evaluation env
 #eval_env = gym.make("PharmacophoreEnv-v0")
 # Stop training if there is no improvement after more than 3 evaluations
@@ -40,7 +43,7 @@ experiment_name = f"PPO_{int(time.time())}"
 wandb.tensorboard.patch(root_logdir=f"runs/{experiment_name}")
 wandb.init(project="repharm", config=config, name=experiment_name, sync_tensorboard=True)
 # Define and Train the agent
-model = PPO(config["policy_type"], env, verbose=2, tensorboard_log=f"runs/{experiment_name}")
+model = PPO(config["policy_type"], vec_env, verbose=2, tensorboard_log=f"runs/{experiment_name}")
 
 model.learn(config["total_timesteps"], log_interval=1, 
             callback=[WandbCallback(gradient_save_freq=100,

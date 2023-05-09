@@ -131,21 +131,21 @@ def executor(r, feature, tree, f=False):
         tol_target, tol_origin = get_tol(tree, feature)
         match r:
             case 0:
-                return set_tol(tree, feature, (float(tol_origin) + 0.15), target="origin")
+                return set_tol(tree, feature, (float(tol_origin) + 0.1), target="origin")
             case 1:
-                return set_tol(tree, feature, (float(tol_origin) - 0.15), target="origin")
+                return set_tol(tree, feature, (float(tol_origin) - 0.1), target="origin")
             case 2:
-                return set_tol(tree, feature, (float(tol_target) + 0.15), target="target")
+                return set_tol(tree, feature, (float(tol_target) + 0.1), target="target")
             case 3:
-                return set_tol(tree, feature, (float(tol_target) - 0.15), target="target")
+                return set_tol(tree, feature, (float(tol_target) - 0.1), target="target")
 
     else:
         tol = get_tol(tree, feature)
         match r:
             case 0:
-                return set_tol(tree, feature, (float(tol) + 0.15))
+                return set_tol(tree, feature, (float(tol) + 0.1))
             case 1:
-                return set_tol(tree, feature, (float(tol) - 0.15))
+                return set_tol(tree, feature, (float(tol) - 0.1))
     
     raise ValueError("No valid action specified")
 
