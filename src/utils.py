@@ -1,6 +1,8 @@
 import subprocess
 from datetime import datetime
 import xml.etree.ElementTree as ET
+import json
+import time
 
 def exec_vhts(output_file, querys, actives_db, inactives_db):
     """
@@ -10,18 +12,31 @@ def exec_vhts(output_file, querys, actives_db, inactives_db):
     :param inactives_db: path to inactives database
     :return: count of positive and negative hits as separate values
     """
+    timings = []
+    # read the config.json file
+    with open(r'C:\Users\kilia\MASTER\rlpharm\src\config.json') as json_file:
+        cmd = json.load(json_file)
+    jvm = cmd["java"]
+    ilib = cmd["ilib"]
+    cp = cmd["cp"]
     datestring = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
     output_file = output_file + '-{}.sdf'.format(datestring)  
-    subprocess.call([r'C:\Users\kilia\MASTER\rlpharm\src\screen.bat', querys, output_file, actives_db, inactives_db], start_new_session=True)
+    start_time = time.time()
+    subprocess.run(f"{jvm}{ilib}{cp} --query {querys} --database {actives_db}, {inactives_db} --output {output_file}", capture_output=True, text=True)
+    timings.append("Subprocess Call: " + str(time.time() - start_time))
+    
+    start_time = time.time()
     poshits = 0
     neghits = 0
-    with open(file=output_file, mode='r') as f:
+    with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
         for line in f:
             if line.startswith('active'):
                 poshits += 1
             if line.startswith('decoy'):
                 neghits += 1
     #print("Hits(pos: " + str(poshits) + ", neg: " + str(neghits) + ")")
+    timings.append("Hitlist read: " + str(time.time() - start_time))
+    print('\n'.join(timings))
     return poshits, neghits
 
 def read_pharmacophores(path):

@@ -5,6 +5,7 @@ import utils
 import csv
 import torch
 import torch.nn as nn
+import time
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -98,15 +99,17 @@ class PharmacophoreEnv(gym.Env):
         return score
     
     def step(self, action):
+        timings = []
         # Execute one time step within the environment
         self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified)
-        
+
         # new observation (state)
         self.last_observation = self.get_observation(initial=False)
-
-        # Evaluate and calculate reward
-        self.reward = self.screen()
         
+        # Evaluate and calculate reward
+        start_time = time.time()
+        self.reward = self.screen()
+        timings.append("Screening: " + str(time.time() - start_time))
         # Episode termination conditions
         terminated = self.reward > self.threshold
         
@@ -128,10 +131,11 @@ class PharmacophoreEnv(gym.Env):
             self.reward = 0
         
         self.counter += 1
-        
+        print('\n'.join(timings))
         return self.last_observation, self.reward, np.any(terminated), truncated, {"performance": self.reward, "diff": diff}
     
     def reset(self, seed=None, options=None):
+        #super().reset()
         # Reset the state of the environment to an initial state
         self.counter = 0
         self.reward = self.screen()

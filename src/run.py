@@ -7,7 +7,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement
-import dataGeneratorCallback as dgc
+#import dataGeneratorCallback as dgc
 from stable_baselines3.common.env_util import make_vec_env
 
 register(
@@ -15,19 +15,20 @@ register(
     id="PharmacophoreEnv-v0",
     # path to the class for creating the env
     entry_point="customenv:PharmacophoreEnv",
+    max_episode_steps=200,
     # Max number of steps per episode, using a `TimeLimitWrapper`
-    kwargs={"output": r'C:\Users\kilia\MASTER\rlpharm\data\hitlists\hitlist', 
-            "querys": r'C:\Users\kilia\MASTER\rlpharm\data\querys\sEH-1ZD5_mod5_LS_3.02.pml', 
-            "actives_db": r'C:\Users\kilia\MASTER\rlpharm\data\seh_actives_mini.ldb',
-            "inactives_db": r"C:\Users\kilia\MASTER\rlpharm\data\seh_inactives_mini.ldb",
+    kwargs={"output": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
+            "querys": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys\\sEH-1ZD5_mod5_LS_3.02.pml', 
+            "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives_mini.ldb2',
+            "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives_mini.ldb2",
             "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
             "ldba": 36,
             "ldbi": 112,
             "features": "H,HBA,HBD",
-            "enable_approximator": True},
+            "enable_approximator": False},
 )
-
 env = gym.make("PharmacophoreEnv-v0")
+obs, _ = env.reset()
 env = Monitor(env)
 vec_env = make_vec_env("PharmacophoreEnv-v0", n_envs=6)
 # Separate evaluation env
@@ -36,7 +37,7 @@ vec_env = make_vec_env("PharmacophoreEnv-v0", n_envs=6)
 #stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=3, min_evals=5, verbose=1)
 #eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_train_callback, verbose=1)
 
-config = {"policy_type": "MultiInputPolicy", "total_timesteps": 50000}
+config = {"policy_type": "MultiInputPolicy", "total_timesteps": 1000}
 experiment_name = f"PPO_{int(time.time())}"
 
 
@@ -51,7 +52,7 @@ model.learn(config["total_timesteps"], log_interval=1,
                                    model_save_path=f"models/{experiment_name}",
                                    verbose=2
         ),
-        dgc.CustomCallback(r"C:\Users\kilia\MASTER\rlpharm\data\approx.csv")
+        #dgc.CustomCallback(r"C:\Users\kilia\MASTER\rlpharm\data\approx.csv")
         ]
 )
 wandb.finish()

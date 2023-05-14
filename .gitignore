@@ -131,6 +131,7 @@ wandb/
 data/
 runs/
 models/
+LS5/
 
 # Spyder project settings
 .spyderproject
