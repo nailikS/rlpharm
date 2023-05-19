@@ -81,7 +81,7 @@ for epoch in range(n_epochs):
  
 # restore model and return best accuracy
 model.load_state_dict(best_weights)
-torch.save(model.state_dict(), r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt")
+torch.save(model.state_dict(), r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best1.pt")
 print("MSE: %.2f" % best_mse)
 print("RMSE: %.2f" % np.sqrt(best_mse))
 plt.plot(history)

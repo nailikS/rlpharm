@@ -12,12 +12,24 @@ class PharmacophoreEnv(gym.Env):
 
     #metadata = {"render.modes": ["console"], "features":{0:"H", 1:"HBA", 2:"HBD", 3:"exclusion"}}
 
-    def __init__(self, output, querys, actives_db, inactives_db, approximator, ldba, ldbi, features, enable_approximator=False):
+    def __init__(self, 
+                 output, 
+                 querys, 
+                 actives_db, 
+                 inactives_db, 
+                 approximator, 
+                 ldba, 
+                 ldbi, 
+                 features, 
+                 enable_approximator=False, 
+                 inf_mode=False):
         super().__init__()
         # Define action and observation space
         # They must be gym.spaces objects
         # Example when using discrete actions:
+        self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
+        # TODO: transfer model specification to config file
         self.approximator = nn.Sequential(
                                 nn.Linear(7, 96),
                                 nn.ReLU(),
@@ -40,7 +52,7 @@ class PharmacophoreEnv(gym.Env):
         self.codec = {0:"H", 
                       1:"HBA", 
                       2:"HBD"}
-        self.threshold = 20 # threshold for reward, TODO: make this a parameter
+        self.threshold = 10 # threshold for reward, TODO: make this a parameter
         self.out_file = output
         self.querys = querys
         self.actives_db = actives_db+":active"
@@ -70,12 +82,12 @@ class PharmacophoreEnv(gym.Env):
         :return: score query pharmacophores against actives and inactives database        
         """
         if self.enable_approximator:
-            obs = self.initial_os if self.counter == 0 else self.last_observation
+            obs = self.last_observation
             values =[]
             for key in obs.keys():
                 values.extend(obs[key])
             with torch.no_grad():
-                return self.approximator(torch.tensor(values, dtype=torch.float32))
+                return self.approximator(torch.tensor(values, dtype=torch.float32)).item()
         # currently for one pharmacophore at a time
         self.temp_querys = self.querys[:-4]+"_temp"+self.querys[-4:]
         self.phar_modified.write(self.temp_querys, encoding="utf-8", xml_declaration=True)
@@ -100,21 +112,15 @@ class PharmacophoreEnv(gym.Env):
     
     def step(self, action):
         timings = []
+        truncated = []
         # Execute one time step within the environment
-        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified)
+        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified, self.phar)
 
         # new observation (state)
-        self.last_observation = self.get_observation(initial=False)
-        
-        # Evaluate and calculate reward
-        start_time = time.time()
-        self.reward = self.screen()
-        timings.append("Screening: " + str(time.time() - start_time))
-        # Episode termination conditions
-        terminated = self.reward > self.threshold
+        self.last_observation = self.get_observation(initial=False)        
         
         # Truncated if episode exceeds timestep limit
-        truncated = self.counter > 200
+        truncated.append(self.counter > 200)
         
         # changes made to the pharmacophore in total, returned in info
         diff = {}
@@ -123,36 +129,63 @@ class PharmacophoreEnv(gym.Env):
                 diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])
 
         # check boundaries
-        terminated = []
         for key in self.last_observation.keys():
-            terminated.append(not np.logical_and(np.all(self.last_observation[key] >= 1), 
-                                                 np.all(self.last_observation[key] <= 5)))
-        if np.any(terminated):
+            truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 1), 
+                                                np.all(self.last_observation[key] <= 5)))
+        if np.any(truncated):
             self.reward = 0
         
+        # Evaluate and calculate reward
+        start_time = time.time()
+        self.reward = self.screen()
+        timings.append("Screening: " + str(time.time() - start_time))
+        
+        # Episode termination conditions
+        terminated = self.reward > self.threshold
+        
         self.counter += 1
-        print('\n'.join(timings))
-        return self.last_observation, self.reward, np.any(terminated), truncated, {"performance": self.reward, "diff": diff}
+        
+        if not self.enable_approximator: print('\n'.join(timings))
+        # print(str(self.last_observation)+"\t"+str(truncated)+"\t"+str(self.counter))
+        return self.last_observation, self.reward, terminated, np.any(truncated), {"performance": self.reward, "diff": diff}
     
     def reset(self, seed=None, options=None):
-        #super().reset()
+        super().reset()
         # Reset the state of the environment to an initial state
         self.counter = 0
-        self.reward = self.screen()
-        self.last_observation = self.get_observation(initial=True)
-        return self.last_observation, {}
+        self.phar_modified = None
+        return self.get_observation(initial=True), {}
     
     def get_observation(self, initial=False):
         os_space = dict()
         for i, f in zip(range(len(self.featureIds)),self.features):
-            x = []
-            for id in self.featureIds[i]:
-                if initial:
-                    x.extend([utils.get_tol(self.phar, id)])
+            x = []              
+            if initial:
+                if self.inference_mode == True:
+                    for id in self.featureIds[i]:
+                        x.extend([utils.get_tol(self.phar_modified, id)])
+                    x = np.array(x, dtype=np.float64)
+                    os_space[f] = np.around(x.flatten(), decimals=2)
                 else:
+                    for id in self.featureIds[i]:
+                        x.extend([utils.get_tol(self.phar, id)])
+                    x = np.array(x, dtype=np.float64)
+                    rans = np.around(np.random.uniform(low=2, high=4, size=(len(x.flatten()),)), decimals=2)
+                    os_space[f] = rans
+                    # write all rans to tree
+                    if i==0 or i==3:
+                        for i, id in enumerate(self.featureIds[i]):
+                            self.phar = utils.set_tol(self.phar, id, rans[i])
+                    if i==1 or i==2:
+                        for id in self.featureIds[i]:    
+                            for j in range(0,len(self.featureIds[i])*2,2):
+                                self.phar = utils.set_tol(self.phar, id, rans[j], target="origin")
+                                self.phar = utils.set_tol(self.phar, id, rans[j+1], target="target")
+            else:
+                for id in self.featureIds[i]:
                     x.extend([utils.get_tol(self.phar_modified, id)])
-            x = np.array(x, dtype=np.float32)
-            os_space[f] = x.flatten()
+                x = np.array(x, dtype=np.float64)
+                os_space[f] = np.around(x.flatten(), decimals=2)
         return os_space
 
     def get_observation_space(self):

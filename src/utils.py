@@ -4,28 +4,31 @@ import xml.etree.ElementTree as ET
 import json
 import time
 
-def exec_vhts(output_file, querys, actives_db, inactives_db):
+def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     """
     Execute VHTS with the given querys
     :param querys: path to query file
     :param actives_db: path to actives database
     :param inactives_db: path to inactives database
-    :return: count of positive and negative hits as separate values
+    :return: count of positive and negative hits as separate values tuple(int, int)
     """
     timings = []
     # read the config.json file
     with open(r'C:\Users\kilia\MASTER\rlpharm\src\config.json') as json_file:
         cmd = json.load(json_file)
+    # the extractions need to be seperate otherwise the f-string will cry 
     jvm = cmd["java"]
     ilib = cmd["ilib"]
     cp = cmd["cp"]
+    # get current time for naming the output file so consistency is ensured
     datestring = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
     output_file = output_file + '-{}.sdf'.format(datestring)  
+    # timing of screening process
     start_time = time.time()
     subprocess.run(f"{jvm}{ilib}{cp} --query {querys} --database {actives_db}, {inactives_db} --output {output_file}", capture_output=True, text=True)
     timings.append("Subprocess Call: " + str(time.time() - start_time))
-    
-    start_time = time.time()
+
+    # read output file from screening and count hits
     poshits = 0
     neghits = 0
     with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
@@ -34,9 +37,8 @@ def exec_vhts(output_file, querys, actives_db, inactives_db):
                 poshits += 1
             if line.startswith('decoy'):
                 neghits += 1
-    #print("Hits(pos: " + str(poshits) + ", neg: " + str(neghits) + ")")
-    timings.append("Hitlist read: " + str(time.time() - start_time))
-    print('\n'.join(timings))
+
+    if verbose == 1: print('\n'.join(timings))
     return poshits, neghits
 
 def read_pharmacophores(path):
@@ -72,6 +74,16 @@ def set_tol(tree, id, newval, target=None):
         return tree
     raise ValueError("No valid target specified")
 
+def set_tree(tree, featureIds, newvals):
+    """
+    Set all elements in tree at once
+    :return: tree
+    """
+    tree = ET.ElementTree()
+    root = ET.Element('pharmacophore')
+    tree._setroot(root)
+    return tree
+
 def set_weight(tree, id, newval):
     """
     Set weight of a feature
@@ -102,7 +114,7 @@ def get_tol(tree, id:str):
         return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
 
 
-def action_execution(action, featureIds, tree):
+def action_execution(action, featureIds, tree, initial_tree):
     """
     Execute an action 
     either:
@@ -112,6 +124,8 @@ def action_execution(action, featureIds, tree):
     :param action: action to execute
     :return: Path to modified Phar file
     """
+    if tree is None:
+        tree = initial_tree
     Hm = 2
     HBAm = 4
     HBDm = 4
@@ -153,6 +167,7 @@ def executor(r, feature, tree, f=False):
                 return set_tol(tree, feature, (float(tol_target) + 0.1), target="target")
             case 3:
                 return set_tol(tree, feature, (float(tol_target) - 0.1), target="target")
+        raise ValueError("No valid action specified")
 
     else:
         tol = get_tol(tree, feature)
@@ -161,6 +176,5 @@ def executor(r, feature, tree, f=False):
                 return set_tol(tree, feature, (float(tol) + 0.1))
             case 1:
                 return set_tol(tree, feature, (float(tol) - 0.1))
-    
-    raise ValueError("No valid action specified")
+        raise ValueError("No valid action specified")
 
