@@ -17,15 +17,19 @@ register(
     entry_point="customenv:PharmacophoreEnv",
     max_episode_steps=200,
     # Max number of steps per episode, using a `TimeLimitWrapper`
-    kwargs={"output": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
-            "querys": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys\\sEH-1ZD5_mod5_LS_3.02.pml', 
-            "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives_mini.ldb2',
-            "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives_mini.ldb2",
-            "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
-            "ldba": 36,
-            "ldbi": 112,
-            "features": "H,HBA,HBD",
-            "enable_approximator": True},
+    kwargs={
+        "output": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
+        "querys": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys\\sEH-1ZD5_mod5_LS_3.02.pml', 
+        "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives_mini.ldb2',
+        "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives_mini.ldb2",
+        "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
+        "ldba": 36,
+        "ldbi": 112,
+        "features": "H,HBA,HBD",
+        "enable_approximator": False,
+        "hybrid_reward": True,
+        "inf_mode": False
+        },
 )
 env = gym.make("PharmacophoreEnv-v0")
 obs, _ = env.reset()
@@ -44,16 +48,16 @@ wandb.tensorboard.patch(root_logdir=f"runs/{experiment_name}")
 wandb.init(project="repharm", config=config, name=experiment_name, sync_tensorboard=True)
 
 # Define and Train the agent
-model = A2C(config["policy_type"], env, verbose=2, tensorboard_log=f"runs/{experiment_name}")
+model = PPO(config["policy_type"], env, verbose=2, tensorboard_log=f"runs/{experiment_name}")
 
-model.learn(config["total_timesteps"], log_interval=1, 
+model.learn(config["total_timesteps"], log_interval=100, 
             callback=[WandbCallback(gradient_save_freq=100,
-                                   model_save_freq=1000, 
+                                   model_save_freq=500, 
                                    model_save_path=f"models/{experiment_name}",
                                    verbose=2
         ),
         #dgc.CustomCallback(r"C:\Users\kilia\MASTER\rlpharm\data\approx.csv")
         ]
 )
-model.save(f"A2C{experiment_name}")
+model.save(f"PPO{experiment_name}")
 wandb.finish()

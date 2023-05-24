@@ -17,11 +17,14 @@ register(
             "ldba": 58, # 58|36
             "ldbi": 177, # 177|112
             "features": "H,HBA,HBD",
-            "enable_approximator": True},
+            "enable_approximator": False,
+            "hybrid_reward": True,
+            "inf_mode": False,
+            },
 )
 env = gym.make("PharmacophoreEnv-v0")
 
-model = A2C.load(r"C:\Users\kilia\MASTER\rlpharm\A2C_1.zip")
+model = A2C.load(r"C:\Users\kilia\MASTER\rlpharm\src\A2C1684660535.zip")
 
 obs, _ = env.reset()
 replay_buffer = {"reward":0, "phar":{}}
@@ -38,3 +41,4 @@ while not END:
     if truncated:
       print('truncated')
       obs, _ = env.reset()
+

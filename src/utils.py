@@ -3,6 +3,7 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 import json
 import time
+import re
 
 def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     """
@@ -29,17 +30,29 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     timings.append("Subprocess Call: " + str(time.time() - start_time))
 
     # read output file from screening and count hits
-    poshits = 0
-    neghits = 0
+    hits = []
+
     with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
         for line in f:
-            if line.startswith('active'):
-                poshits += 1
-            if line.startswith('decoy'):
-                neghits += 1
+            if line.startswith('active\n'):
+                hits.append(1)
+            if line.startswith('decoy\n'):
+                hits.append(0)
 
     if verbose == 1: print('\n'.join(timings))
-    return poshits, neghits
+
+    with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
+        document = f.read()
+        scores = extract_scores_from_file(document)
+    
+    return hits, scores
+
+def extract_scores_from_file(document):
+    pattern = r'> <Score>\n(\d+\.?\d*)'  # Regular expression pattern to match the score
+    # Find all matches of the pattern in the document
+    matches = re.findall(pattern, document)
+    scores = [float(match) for match in matches]  # Extract the numbers and convert to floats
+    return scores
 
 def read_pharmacophores(path):
     """
