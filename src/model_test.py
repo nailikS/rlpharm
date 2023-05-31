@@ -1,6 +1,6 @@
 import gymnasium as gym
 from gymnasium.envs.registration import register
-from stable_baselines3 import A2C
+from stable_baselines3 import A2C, PPO
 
 register(
     # unique identifier for the env `name-version`
@@ -19,26 +19,29 @@ register(
             "features": "H,HBA,HBD",
             "enable_approximator": False,
             "hybrid_reward": True,
-            "inf_mode": False,
+            "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\inference.csv",
+            "inf_mode": True,
             },
 )
 env = gym.make("PharmacophoreEnv-v0")
 
-model = A2C.load(r"C:\Users\kilia\MASTER\rlpharm\src\A2C1684660535.zip")
+model = PPO.load(r"C:\Users\kilia\MASTER\rlpharm\src\PPO1684928959.zip")
 
+
+END = False
 obs, _ = env.reset()
 replay_buffer = {"reward":0, "phar":{}}
-END = False
-while not END:
+n=0
+while END == False:
+    n+=1
     action, _states = model.predict(obs)
     obs, reward, terminated, truncated, info = env.step(action)
-    END = terminated
-    print(obs)
-    print(reward)
+    END = (terminated or truncated) or n > 200
+
     if reward > replay_buffer["reward"]:
         replay_buffer["reward"] = reward
         replay_buffer["phar"] = obs
     if truncated:
-      print('truncated')
-      obs, _ = env.reset()
-
+        print('truncated')
+        END = True
+print(replay_buffer)

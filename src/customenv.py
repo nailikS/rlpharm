@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import time
 import pandas as pd
+from sklearn.metrics import roc_auc_score
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -24,8 +25,10 @@ class PharmacophoreEnv(gym.Env):
                  ldbi, 
                  features, 
                  enable_approximator=False,
-                 hybrid_reward=False, 
-                 inf_mode=False):
+                 hybrid_reward=False,
+                 buffer_path="../data/approxCollection.csv",
+                 inf_mode=False,
+                 ):
         super().__init__()
         # Define action and observation space
         # They must be gym.spaces objects
@@ -55,7 +58,8 @@ class PharmacophoreEnv(gym.Env):
         self.codec = {0:"H", 
                       1:"HBA", 
                       2:"HBD"}
-        self.threshold = 10 # threshold for reward, TODO: make this a parameter
+        self.buffer_path = buffer_path
+        self.threshold = 0.7 # threshold for reward, TODO: make this a parameter
         self.out_file = output
         self.querys = querys
         self.actives_db = actives_db+":active"
@@ -69,7 +73,7 @@ class PharmacophoreEnv(gym.Env):
         self.counter = 0
         if hybrid_reward:
             self.hybrid_reward = True
-            self.replay_buffer = pd.read_csv("../data/approxCollection.csv")
+            self.replay_buffer = pd.read_csv(buffer_path)
         self.timings = []
         anvec = 0
         for i in range(len(self.featureIds)): 
@@ -99,17 +103,17 @@ class PharmacophoreEnv(gym.Env):
             values = []
             for key in obs.keys():
                 values.extend(obs[key])
-            matching_rows = self.replay_buffer.loc[(self.replay_buffer[self.replay_buffer.columns[1:]] == values).all(axis=1)]
+            matching_rows = self.replay_buffer.loc[(self.replay_buffer[self.replay_buffer.columns[1:-2]] == values).all(axis=1)]
             if not matching_rows.empty:
-                return matching_rows.iloc[0, 0]
+                return matching_rows.iloc[0, 0], matching_rows.iloc[0, -2], matching_rows.iloc[0, -1]
             else:
-                reward = self.screening()
-                new_row = [reward] + values
+                reward, p, n = self.screening()
+                new_row = [reward] + values + [p, n] 
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
-                return reward
+                return reward, p, n
 
     def refresh_buffer(self):
-        self.replay_buffer.to_csv("../data/approxCollection.csv", index=False)
+        self.replay_buffer.to_csv(self.buffer_path, index=False)
 
     def screening(self):
         """
@@ -118,11 +122,11 @@ class PharmacophoreEnv(gym.Env):
         """   
         self.temp_querys = self.querys[:-4]+"_temp"+self.querys[-4:]
         self.phar_modified.write(self.temp_querys, encoding="utf-8", xml_declaration=True)
-        hits, scores = utils.exec_vhts(output_file=self.out_file, 
-                                             querys=self.temp_querys, 
-                                             actives_db=self.actives_db, 
-                                             inactives_db=self.inactives_db)
-        return self.scoring(hits, scores)
+        hits, scores, pos, neg = utils.exec_vhts(output_file=self.out_file, 
+                                                querys=self.temp_querys, 
+                                                actives_db=self.actives_db, 
+                                                inactives_db=self.inactives_db)
+        return self.scoring(hits, scores), pos, neg
 
     def scoring(self, hits, scores):
         """
@@ -131,32 +135,17 @@ class PharmacophoreEnv(gym.Env):
         :param scores: list of pharmacophore fit scores
         :return: rocAUC of the hitlist
         """     
-        sorted_hits = sorted(zip(scores, hits), key=lambda x: x[0], reverse=True)
-        sorted_true_labels = [label for _, label in sorted_hits]
-
-        # Calculate the true positive count and false positive count
-        num_positives = sum(sorted_true_labels)
-        num_negatives = len(sorted_true_labels) - num_positives
-
-        # Create arrays to store true positive rates and false positive rates
-        tpr = np.zeros(len(sorted_true_labels))
-        fpr = np.zeros(len(sorted_true_labels))
-
-        # Iterate through the sorted hits to compute TPR and FPR
-        tp_count = 0
-        fp_count = 0
-        for i, (_, label) in enumerate(sorted_hits):
-            if label == 1:
-                tp_count += 1
-            if label == 0:
-                fp_count += 1
-
-            tpr[i] = tp_count / num_positives
-            fpr[i] = fp_count / num_negatives
-
-        # Calculate the ROC AUC using the trapezoidal rule
-        roc_auc = np.trapz(tpr, fpr)
-        return roc_auc
+        # Calculate ROC AUC with weighted cost for false positives
+        # Set the weight for false positives
+        # weight = 10
+        # iterate over hits and scores, every time hits is 0, add 9 zeros on that index and multiply the score in the same position by 10
+        idx = np.where(np.array(hits) == 0)[0]
+        j=0
+        for i in idx:
+            hits = np.insert(hits, i+j, np.zeros(9))
+            scores = np.insert(scores, i+j, np.full(9,scores[i+j])) 
+            j += 9
+        return roc_auc_score(hits, scores)
     
     def step(self, action):
         truncated = []
@@ -171,13 +160,17 @@ class PharmacophoreEnv(gym.Env):
         
         # changes made to the pharmacophore in total, returned in info
         diff = {}
+        if self.inference_mode:
+            self.refresh_buffer()
+
         if self.counter % 100 == 0:
             # writes updated replay buffer to filesystem
-            self.refresh_buffer()
             print(np.mean(self.timings[-100:]))
             for key in self.last_observation.keys():
                 diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])            
-
+        if self.counter % 10 == 0:
+            self.refresh_buffer()   
+        
         # check boundaries
         for key in self.last_observation.keys():
             truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 1), 
@@ -187,14 +180,20 @@ class PharmacophoreEnv(gym.Env):
         
         # Evaluate and calculate reward
         start_time = time.time()
-        self.reward = self.get_reward()
+        self.reward, pos, neg = self.get_reward()
         timing = time.time() - start_time
         
         # Episode termination conditions
-        terminated = self.reward > self.threshold
+
+        primary_ = (self.reward > self.threshold)
+        secondary_ = (pos > self.ldba_size/10 and neg == 0)
+        terminated = (primary_ or secondary_)
+
         self.timings.append(timing)
         self.counter += 1
-        if terminated: print("threshold reached")
+        if terminated: print("terminated")
+        if primary_: print("threshold of "+str(self.threshold)+" reached")
+        if secondary_: print(f"10% ({self.ldba_size/10}) and no neg")
         # if not self.enable_approximator: print('\n'.join(timings))
         # print(str(self.last_observation)+"\t"+str(truncated)+"\t"+str(self.counter))
         return self.last_observation, self.reward, terminated, np.any(truncated), {"performance": self.reward, "diff": diff}
@@ -239,16 +238,20 @@ class PharmacophoreEnv(gym.Env):
         return os_space
 
     def write_values_to_tree(self, values):
-        if i==0 or i==3:
-            for i, id in enumerate(self.featureIds[i]):
-                self.phar = utils.set_tol(self.phar, id, values[i])
-        if i==1 or i==2:
-            for id in self.featureIds[i]:    
-                for j in range(0,len(self.featureIds[i])*2,2):
-                    self.phar = utils.set_tol(self.phar, id, values[j], target="origin")
-                    self.phar = utils.set_tol(self.phar, id, values[j+1], target="target")
+        writes = 0
+        for i in range(len(self.featureIds)):
+            if i==0 or i==3:
+                for i, id in enumerate(self.featureIds[i]):
+                    self.phar = utils.set_tol(self.phar, id, values[i])
+                    writes += 1
+            if i==1 or i==2:
+                for id in self.featureIds[i]:    
+                    self.phar = utils.set_tol(self.phar, id, values[writes], target="origin")
+                    self.phar = utils.set_tol(self.phar, id, values[writes+1], target="target")
+                    writes += 2
     
     def get_observation_space(self):
+        
         d = self.bounds.copy()
         for i in range(len(self.featureIds)):
             feature = self.features[i]
@@ -281,6 +284,11 @@ class PharmacophoreEnv(gym.Env):
         self.featureIds = featureIds
 
     def generate_examples(self, n=None, csv_file="examples.csv"):
+        """
+        Purely for generating screening observations for training of approximation models
+        :param n: number of observations to generate
+        :param csv_file: file to write observation spaces + rewards to
+        """
         if n == None:
             n = 1000
         temp_querys = self.querys[:-4]+"_temp"+self.querys[-4:]
@@ -334,7 +342,17 @@ class PharmacophoreEnv(gym.Env):
                     new.extend(map(str, values))
                     writer.writerow(new)
             
-            
+    def obs_to_pml(self, observation, filename=None):
+        """
+        Writes observation to pml file
+        """
+        if filename == None:
+            filename = self.querys[:-4]+"_temp"+self.querys[-4:]
+        
+        self.write_values_to_tree(observation)
+
+        self.phar.write(filename, encoding="utf-8", xml_declaration=True)
+        
 
 
 

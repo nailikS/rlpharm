@@ -9,7 +9,7 @@ import tqdm
 from sklearn.model_selection import train_test_split
  
 # Read data
-data_path = r"C:\Users\kilia\MASTER\rlpharm\data\approxFinal.csv"
+data_path = r"C:\Users\kilia\MASTER\rlpharm\data\approxCollection.csv"
 df = pd.read_csv(data_path)
 X = df.iloc[:, 1:].values
 y = df.iloc[:, 0].values.reshape(-1, 1)
@@ -25,25 +25,23 @@ y_test = torch.tensor(y_test, dtype=torch.float32).reshape(-1, 1)
  
 # Define the model
 model = nn.Sequential(
-    nn.Linear(7, 96),
+    nn.Linear(7, 256),
     nn.ReLU(),
-    nn.Linear(96, 192),
+    nn.Linear(256, 128),
     nn.ReLU(),
-    nn.Linear(192, 96),
+    nn.Linear(128, 64),
     nn.ReLU(),
-    nn.Linear(96, 48),
+    nn.Linear(64, 32),
     nn.ReLU(),
-    nn.Linear(48, 24),
-    nn.ReLU(),
-    nn.Linear(24, 1),
+    nn.Linear(32, 1),
 )
  
 # loss function and optimizer
 loss_fn = nn.MSELoss()  # mean square error
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
  
-n_epochs = 600   # number of epochs to run
-batch_size = 10  # size of each batch
+n_epochs = 100   # number of epochs to run
+batch_size = 100  # size of each batch
 batch_start = torch.arange(0, len(X_train), batch_size)
  
 # Hold the best model

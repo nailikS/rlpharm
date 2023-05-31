@@ -31,21 +31,24 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
 
     # read output file from screening and count hits
     hits = []
-
+    pos = 0
+    neg = 0
     with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
         for line in f:
-            if line.startswith('active\n'):
+            if line.endswith('active\n'):
                 hits.append(1)
-            if line.startswith('decoy\n'):
+                pos += 1
+            if line.endswith('decoy\n'):
                 hits.append(0)
+                neg += 1
 
     if verbose == 1: print('\n'.join(timings))
 
     with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
         document = f.read()
         scores = extract_scores_from_file(document)
-    
-    return hits, scores
+
+    return hits, scores, pos, neg
 
 def extract_scores_from_file(document):
     pattern = r'> <Score>\n(\d+\.?\d*)'  # Regular expression pattern to match the score
