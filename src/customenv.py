@@ -7,7 +7,11 @@ import torch
 import torch.nn as nn
 import time
 import pandas as pd
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import os.path
+from itertools import chain
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -28,63 +32,79 @@ class PharmacophoreEnv(gym.Env):
                  hybrid_reward=False,
                  buffer_path="../data/approxCollection.csv",
                  inf_mode=False,
+                 threshold=1.5,
+                 render_mode="console",
+                 verbose=0,
+                 ep_length=100,
+                 delta=0.1,
                  ):
-        super().__init__()
-        # Define action and observation space
-        # They must be gym.spaces objects
-        # Example when using discrete actions:
+        super().__init__()        
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
         # TODO: transfer model specification to config file
-        self.approximator = nn.Sequential(
-                                nn.Linear(7, 96),
-                                nn.ReLU(),
-                                nn.Linear(96, 192),
-                                nn.ReLU(),
-                                nn.Linear(192, 96),
-                                nn.ReLU(),
-                                nn.Linear(96, 48),
-                                nn.ReLU(),
-                                nn.Linear(48, 24),
-                                nn.ReLU(),
-                                nn.Linear(24, 1),
-                            )
-        self.approximator.load_state_dict(torch.load(approximator))
         self.features = features.split(",")
-        self.bounds = {"H":np.array([1, 5], dtype=np.float32), 
-                       "HBA":np.array([1, 5], dtype=np.float32), 
-                       "HBD":np.array([1, 5], dtype=np.float32),
-                       }
-        self.codec = {0:"H", 
-                      1:"HBA", 
-                      2:"HBD"}
+        self.bounds = [np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32)]
+        self.codec = {"H":0, "HBA":1, "HBD":2}
         self.buffer_path = buffer_path
-        self.threshold = 0.7 # threshold for reward, TODO: make this a parameter
+        self.threshold = threshold
+        # TODO: replace forward slash with double forward slash
         self.out_file = output
         self.querys = querys
         self.actives_db = actives_db+":active"
         self.inactives_db = inactives_db+":inactive"
-        self.ldba_size = ldba
-        self.ldbi_size = ldbi
+        self.n_inhibs = ldba
+        self.n_decoys = ldbi
+        self.max_EF = 1 / (self.n_inhibs / (self.n_inhibs + self.n_decoys))
         self.phar = utils.read_pharmacophores(querys)
         self.phar_modified = utils.read_pharmacophores(querys)
         self.read_featureIds()
         self.initial_os = self.get_observation(initial=True)
         self.counter = 0
-        if hybrid_reward:
-            self.hybrid_reward = True
-            self.replay_buffer = pd.read_csv(buffer_path)
-        self.timings = []
+        self.render_mode = render_mode
+        self.verbose = verbose
+        self.episode_length = ep_length
+        self.delta = delta
+        
         anvec = 0
+        log_features = []
         for i in range(len(self.featureIds)): 
             if i==0 or i==3:
                 anvec += len(self.featureIds[i]*2)
+                log_features.extend(self.featureIds[i])
             if i==1 or i==2:
                 anvec += len(self.featureIds[i]*4)
-        
-        # Initialization of Spaces
+                doubledIDs = []
+                for id in self.featureIds[i]:
+                    doubledIDs.extend([id+"_orgin", id+"_target"])
+                log_features.extend(doubledIDs)
+        if hybrid_reward:
+            self.hybrid_reward = True
+            if os.path.exists(buffer_path):
+                self.replay_buffer = pd.read_csv(buffer_path)
+                if len(self.replay_buffer.columns)-5 != len(log_features):
+                    raise ValueError("Buffer columns do not match the pharmacophore provided")
+            else:
+                self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
+                self.replay_buffer.to_csv(buffer_path, index=False)
+        self.timings = []
+        # Define action and observation space
         self.action_space = spaces.Discrete(anvec)
         self.observation_space = spaces.Dict(self.get_observation_space())
+        # approximator setup
+        if self.enable_approximator:
+            self.approximator = nn.Sequential(
+                nn.Linear(len(log_features), 256),
+                nn.ReLU(),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, 32),
+                nn.ReLU(),
+                nn.Linear(32, 1),
+            )
+            self.approximator.load_state_dict(torch.load(approximator))
+
 
     def get_reward(self):
         """
@@ -97,20 +117,20 @@ class PharmacophoreEnv(gym.Env):
             for key in obs.keys():
                 values.extend(obs[key])
             with torch.no_grad():
-                return self.approximator(torch.tensor(values, dtype=torch.float32)).item()
+                return self.approximator(torch.tensor(values, dtype=torch.float32)).item(), 1, 1
         if self.hybrid_reward:
             obs = self.last_observation
             values = []
             for key in obs.keys():
                 values.extend(obs[key])
-            matching_rows = self.replay_buffer.loc[(self.replay_buffer[self.replay_buffer.columns[1:-2]] == values).all(axis=1)]
+            matching_rows = self.replay_buffer.loc[(self.replay_buffer[self.replay_buffer.columns[5:]] == values).all(axis=1)]
             if not matching_rows.empty:
-                return matching_rows.iloc[0, 0], matching_rows.iloc[0, -2], matching_rows.iloc[0, -1]
+                return matching_rows.iloc[0, 0], matching_rows.iloc[0, 3], matching_rows.iloc[0, 4]
             else:
-                reward, p, n = self.screening()
-                new_row = [reward] + values + [p, n] 
+                auc, ef, p, n = self.screening()
+                new_row = [ef+auc, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
-                return reward, p, n
+                return auc + ef, p, n
 
     def refresh_buffer(self):
         self.replay_buffer.to_csv(self.buffer_path, index=False)
@@ -126,11 +146,11 @@ class PharmacophoreEnv(gym.Env):
                                                 querys=self.temp_querys, 
                                                 actives_db=self.actives_db, 
                                                 inactives_db=self.inactives_db)
-        return self.scoring(hits, scores), pos, neg
+        return *self.scoring(hits, scores, pos, neg), pos, neg
 
-    def scoring(self, hits, scores):
+    def scoring(self, hits, scores, pos, neg):
         """
-        Calculate score
+        Calculate score 
         :param hits: list of hit labels (0=FP or 1:TP)
         :param scores: list of pharmacophore fit scores
         :return: rocAUC of the hitlist
@@ -139,64 +159,81 @@ class PharmacophoreEnv(gym.Env):
         # Set the weight for false positives
         # weight = 10
         # iterate over hits and scores, every time hits is 0, add 9 zeros on that index and multiply the score in the same position by 10
+        a_hits, a_scores = utils.insert_elements(self.n_inhibs-sum(hits), self.n_decoys-(len(hits)-sum(hits)))
+        hits.extend(a_hits)
+        scores.extend(a_scores)
         idx = np.where(np.array(hits) == 0)[0]
         j=0
         for i in idx:
             hits = np.insert(hits, i+j, np.zeros(9))
             scores = np.insert(scores, i+j, np.full(9,scores[i+j])) 
             j += 9
-        return roc_auc_score(hits, scores)
+        
+        auc = roc_auc_score(hits, scores)
+        if pos == 0 and neg == 0: ef = 0 
+        else: ef = ((pos / (pos + neg)) / (self.n_inhibs / (self.n_inhibs + self.n_decoys))) / self.max_EF # normalized by maximum EF
+        
+        if self.render_mode == "human":
+            fpr, tpr, _ = roc_curve(hits, scores)
+            self.render(fpr, tpr, auc, ef) 
+        
+        return auc, ef
     
     def step(self, action):
-        truncated = []
         # Execute one time step within the environment
-        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified, self.phar)
+        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified, self.phar, self.delta)
 
         # new observation (state)
         self.last_observation = self.get_observation(initial=False)        
         
+        truncated = []
         # Truncated if episode exceeds timestep limit
-        truncated.append(self.counter > 200)
+        truncated.append(self.counter > self.episode_length)
         
-        # changes made to the pharmacophore in total, returned in info
-        diff = {}
+        # in inference mode the csv is updated with every step so no observations are lost
         if self.inference_mode:
             self.refresh_buffer()
 
-        if self.counter % 100 == 0:
-            # writes updated replay buffer to filesystem
-            print(np.mean(self.timings[-100:]))
-            for key in self.last_observation.keys():
-                diff[key] = np.subtract(self.last_observation[key], self.initial_os[key])            
-        if self.counter % 10 == 0:
-            self.refresh_buffer()   
-        
         # check boundaries
         for key in self.last_observation.keys():
-            truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 1), 
+            truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 0.5), 
                                                 np.all(self.last_observation[key] <= 5)))
-        if np.any(truncated):
+        truncated = np.any(truncated)
+        if truncated:
             self.reward = 0
         
         # Evaluate and calculate reward
         start_time = time.time()
         self.reward, pos, neg = self.get_reward()
-        timing = time.time() - start_time
+        self.timings.append(time.time() - start_time)
+        secondary_ = False
         
         # Episode termination conditions
-
-        primary_ = (self.reward > self.threshold)
-        secondary_ = (pos > self.ldba_size/10 and neg == 0)
+        # if NN Model is used for approximation only a reward is returned 
+        if not self.enable_approximator:
+            secondary_ = (pos > self.n_inhibs//10 and neg == 0)
+            # writes updated replay buffer to filesystem
+            if self.counter % 10 == 0:
+                self.refresh_buffer()
+        
+        primary_ = (self.reward > self.threshold) 
         terminated = (primary_ or secondary_)
-
-        self.timings.append(timing)
         self.counter += 1
-        if terminated: print("terminated")
-        if primary_: print("threshold of "+str(self.threshold)+" reached")
-        if secondary_: print(f"10% ({self.ldba_size/10}) and no neg")
-        # if not self.enable_approximator: print('\n'.join(timings))
-        # print(str(self.last_observation)+"\t"+str(truncated)+"\t"+str(self.counter))
-        return self.last_observation, self.reward, terminated, np.any(truncated), {"performance": self.reward, "diff": diff}
+        
+        if self.verbose > 0: # verbosuty level 1
+            if self.counter % 100 == 0:
+                # Debug message: mean of last 100 reward evals
+                print(np.mean(self.timings[-100:]))
+
+        if self.verbose > 1: # verbosity level 2
+            if terminated: print("terminated")
+            if truncated: print("truncated")
+
+        if self.verbose > 2: # verbosity level 3
+            if primary_: print("threshold of "+str(self.threshold)+" reached")
+            if secondary_: print(f"10% ({self.n_inhibs/10}) and no neg")
+        
+        return self.last_observation, self.reward, terminated, truncated, {}
     
     def reset(self, seed=None, options=None):
         super().reset()
@@ -219,7 +256,7 @@ class PharmacophoreEnv(gym.Env):
                     for id in self.featureIds[i]:
                         x.extend([utils.get_tol(self.phar, id)])
                     x = np.array(x, dtype=np.float64)
-                    rans = np.around(np.random.uniform(low=2, high=4, size=(len(x.flatten()),)), decimals=1)
+                    rans = np.around(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), decimals=1)
                     os_space[f] = rans
                     # write all rans to tree
                     if i==0 or i==3:
@@ -237,7 +274,7 @@ class PharmacophoreEnv(gym.Env):
                 os_space[f] = np.around(x.flatten(), decimals=1)
         return os_space
 
-    def write_values_to_tree(self, values):
+    def write_values_to_tree(self, values, runtime=False):
         writes = 0
         for i in range(len(self.featureIds)):
             if i==0 or i==3:
@@ -249,26 +286,26 @@ class PharmacophoreEnv(gym.Env):
                     self.phar = utils.set_tol(self.phar, id, values[writes], target="origin")
                     self.phar = utils.set_tol(self.phar, id, values[writes+1], target="target")
                     writes += 2
+        if runtime:
+            self.phar_modified = self.phar
     
     def get_observation_space(self):
-        
-        d = self.bounds.copy()
+        d = {}
         for i in range(len(self.featureIds)):
             feature = self.features[i]
-            lower = self.bounds[feature][0]
-            upper = self.bounds[feature][1]
-            up = []
-            down = []
+            lower = self.bounds[i][0]
+            upper = self.bounds[i][1]
+            
             if feature == "H": # or feature == "exclusion" 
-                for _ in self.featureIds[i]:
-                    up.extend([upper])
-                    down.extend([lower])
+                up = [upper for _ in self.featureIds[i]]
+                down = [lower for _ in self.featureIds[i]]
                 d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i]),), dtype=np.float32)
+            
             if feature == "HBA" or feature == "HBD":
-                for _ in self.featureIds[i]:
-                    up.extend([upper, upper])
-                    down.extend([lower, lower])
+                up = [upper for _ in range(len(self.featureIds[i])*2)]
+                down = [upper for _ in range(len(self.featureIds[i])*2)]
                 d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*2,), dtype=np.float32)
+        
         return d
 
     def read_featureIds(self):
@@ -342,25 +379,55 @@ class PharmacophoreEnv(gym.Env):
                     new.extend(map(str, values))
                     writer.writerow(new)
             
-    def obs_to_pml(self, observation, filename=None):
+    def obs_to_pml(self, observation, filename=None, runtime=False):
         """
         Writes observation to pml file
         """
         if filename == None:
             filename = self.querys[:-4]+"_temp"+self.querys[-4:]
         
-        self.write_values_to_tree(observation)
+        self.write_values_to_tree(observation, runtime=runtime)
 
         self.phar.write(filename, encoding="utf-8", xml_declaration=True)
         
 
 
 
-    def render(self, mode="console"):
-        ...
+    def render(self, fpr, tpr, auc, ef, mode="console"):
+        fig = plt.figure(figsize=(10, 5))
+        gs = gridspec.GridSpec(1, 2, width_ratios=[5, 1])
+
+        # Plot ROC curve on the first subplot
+        ax_roc = plt.subplot(gs[0])
+        ax_roc.plot(fpr, tpr, label='ROC curve (AUC = {:.2f})'.format(auc))
+        ax_roc.plot([0, 1], [0, 1], linestyle='--', color='r', label='Random')
+        ax_roc.set_xlabel('False Positive Rate')
+        ax_roc.set_ylabel('True Positive Rate')
+        ax_roc.set_title(f'ROC Curve for {self.last_observation}')
+        ax_roc.legend()
+
+        # Bar plot on the second subplot
+        ax_bar = plt.subplot(gs[1])
+        bar_label = 'EF Score'
+        bar_height = ef
+        bar_color = 'g'
+
+        bar_position = [1]  # Adjust the position as desired
+
+        ax_bar.bar(bar_position, bar_height, color=bar_color, label=bar_label)
+        ax_bar.set_title('EF Score')
+        ax_bar.set_ylabel('EF Score')
+        ax_bar.set_xticks([])  # Remove x-axis ticks for better visualization
+        ax_bar.set_ylim(0,4)
+        ax_bar.legend()
+
+        # Display the plot
+        plt.tight_layout()
+        plt.savefig(f"../data/images/{int(time.time())}.png")
+        plt.close()
+    
     def close(self):
         ...
-
     
     
 

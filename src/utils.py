@@ -4,6 +4,8 @@ import xml.etree.ElementTree as ET
 import json
 import time
 import re
+import math
+import numpy as np
 
 def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     """
@@ -56,6 +58,64 @@ def extract_scores_from_file(document):
     matches = re.findall(pattern, document)
     scores = [float(match) for match in matches]  # Extract the numbers and convert to floats
     return scores
+
+def insert_elements(i, j):
+    """
+    Creates an array for TP and FP elements respectively and inserts the TP elements
+    evenly distributed into the FP array, then returns that, plus a np.zeros array of the same length
+    :param i: number of TP elements to be inserted into FP array
+    :param j: number of FP elements
+    :return: array with inserted elements plus array of same length filled with zeros
+    """
+    i = np.ones(i, dtype=int)
+    j = np.zeros(j, dtype=int)   
+    n = len(i)  # Length of the array to be inserted
+    m = len(j)  # Length of the target array
+    if n == 0:  # If the array to be inserted is empty, return the target array as it is
+        return j
+    interval = math.floor(m / n)  # interval to distribute the indices evenly
+    index = 0
+    for element in i:
+        j = np.insert(j, index, element)  # Insert the element
+        index += interval + 1 
+    return j.tolist(), np.full(len(j), 0).tolist()
+
+def scoring(hits:list, scores:list, ldbi:int, ldba:int):
+        """
+        Calculate score
+        :param hits: list of hit labels (0=FP or 1:TP)
+        :param scores: list of pharmacophore fit scores
+        :param ldbi: number of inactive compounds in the database
+        :param ldba: number of active compounds in the database
+        :return: rocAUC of the hitlist
+        """     
+        a_hits, a_scores = insert_elements(ldba-sum(hits), ldbi-(len(hits)-sum(hits)))
+        sorted_hits = sorted(zip(scores.extend(a_scores), hits.extend(a_hits)), key=lambda x: x[0], reverse=True)
+        sorted_true_labels = [label for _, label in sorted_hits]
+
+        # Calculate the true positive count and false positive count
+        num_positives = sum(sorted_true_labels)
+        num_negatives = len(sorted_true_labels) - num_positives
+
+        # Create arrays to store true positive rates and false positive rates
+        tpr = np.zeros(len(sorted_true_labels))
+        fpr = np.zeros(len(sorted_true_labels))
+
+        # Iterate through the sorted hits to compute TPR and FPR
+        tp_count = 0
+        fp_count = 0
+        for i, (_, label) in enumerate(sorted_hits):
+            if label == 1:
+                tp_count += 1
+            if label == 0:
+                fp_count += 1
+
+            tpr[i] = tp_count / num_positives
+            fpr[i] = fp_count / num_negatives  
+
+        # Calculate the ROC AUC using the trapezoidal rule
+        roc_auc = np.trapz(tpr, fpr)
+        return roc_auc
 
 def read_pharmacophores(path):
     """
@@ -130,7 +190,7 @@ def get_tol(tree, id:str):
         return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
 
 
-def action_execution(action, featureIds, tree, initial_tree):
+def action_execution(action, featureIds, tree, initial_tree, delta):
     """
     Execute an action 
     either:
@@ -153,19 +213,19 @@ def action_execution(action, featureIds, tree, initial_tree):
         d = action // Hm #feature number
         r = action % Hm #0: tol+, 1: tol-
         feature = featureIds[0][d] #feature id
-        return executor(r, feature, tree)
+        return executor(r, feature, tree, False, delta)
     if action >= H and action < H + HBA:
         d = (action-H) // HBAm #feature number
         r = (action-H) % HBAm #0: tol+, 1: tol-, 2: tol+, 3: tol-
         feature = featureIds[1][d] #feature id
-        return executor(r, feature, tree, True)
+        return executor(r, feature, tree, True, delta)
     if action >= H + HBA:
         d = (action-H-HBA) // HBDm #feature number
         r = (action-H-HBA) % HBDm #0: tol+, 1: tol-, 2: tol+, 3: tol-
         feature = featureIds[2][d] #feature id
-        return executor(r, feature, tree, True)
+        return executor(r, feature, tree, True, delta)
 
-def executor(r, feature, tree, f=False):
+def executor(r, feature, tree, f=False, delta=0.1):
     """
     Outsourcing of execution code
     :param r: action encoding
@@ -176,21 +236,21 @@ def executor(r, feature, tree, f=False):
         tol_target, tol_origin = get_tol(tree, feature)
         match r:
             case 0:
-                return set_tol(tree, feature, (float(tol_origin) + 0.1), target="origin")
+                return set_tol(tree, feature, (float(tol_origin) + delta), target="origin")
             case 1:
-                return set_tol(tree, feature, (float(tol_origin) - 0.1), target="origin")
+                return set_tol(tree, feature, (float(tol_origin) - delta), target="origin")
             case 2:
-                return set_tol(tree, feature, (float(tol_target) + 0.1), target="target")
+                return set_tol(tree, feature, (float(tol_target) + delta), target="target")
             case 3:
-                return set_tol(tree, feature, (float(tol_target) - 0.1), target="target")
+                return set_tol(tree, feature, (float(tol_target) - delta), target="target")
         raise ValueError("No valid action specified")
 
     else:
         tol = get_tol(tree, feature)
         match r:
             case 0:
-                return set_tol(tree, feature, (float(tol) + 0.1))
+                return set_tol(tree, feature, (float(tol) + delta))
             case 1:
-                return set_tol(tree, feature, (float(tol) - 0.1))
+                return set_tol(tree, feature, (float(tol) - delta))
         raise ValueError("No valid action specified")
 
