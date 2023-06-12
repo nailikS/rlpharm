@@ -28,7 +28,7 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     output_file = output_file + '-{}.sdf'.format(datestring)  
     # timing of screening process
     start_time = time.time()
-    subprocess.run(f"{jvm}{ilib}{cp} --query {querys} --database {actives_db}, {inactives_db} --output {output_file}", capture_output=True, text=True)
+    subprocess.run(f"{jvm}{ilib}{cp} --query {querys} --database {actives_db}, {inactives_db} --output {output_file} -C 4", capture_output=True, text=True)
     timings.append("Subprocess Call: " + str(time.time() - start_time))
 
     # read output file from screening and count hits
@@ -150,16 +150,6 @@ def set_tol(tree, id, newval, target=None):
         return tree
     raise ValueError("No valid target specified")
 
-def set_tree(tree, featureIds, newvals):
-    """
-    Set all elements in tree at once
-    :return: tree
-    """
-    tree = ET.ElementTree()
-    root = ET.Element('pharmacophore')
-    tree._setroot(root)
-    return tree
-
 def set_weight(tree, id, newval):
     """
     Set weight of a feature
@@ -190,7 +180,7 @@ def get_tol(tree, id:str):
         return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
 
 
-def action_execution(action, featureIds, tree, initial_tree, delta):
+def action_execution(action, featureIds, tree, initial_tree, delta, action_space):
     """
     Execute an action 
     either:

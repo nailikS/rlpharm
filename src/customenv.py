@@ -11,7 +11,8 @@ from sklearn.metrics import roc_auc_score, roc_curve
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import os.path
-from itertools import chain
+#from itertools import chain
+import xml.etree.ElementTree as ET
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -29,7 +30,7 @@ class PharmacophoreEnv(gym.Env):
                  ldbi, 
                  features, 
                  enable_approximator=False,
-                 hybrid_reward=False,
+                 hybrid_reward=True,
                  buffer_path="../data/approxCollection.csv",
                  inf_mode=False,
                  threshold=1.5,
@@ -37,11 +38,12 @@ class PharmacophoreEnv(gym.Env):
                  verbose=0,
                  ep_length=100,
                  delta=0.1,
+                 action_space_type="discrete",
                  ):
-        super().__init__()        
+        super().__init__()
+        self.action_space_type = action_space_type        
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
-        # TODO: transfer model specification to config file
         self.features = features.split(",")
         self.bounds = [np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32)]
         self.codec = {"H":0, "HBA":1, "HBD":2}
@@ -55,17 +57,18 @@ class PharmacophoreEnv(gym.Env):
         self.n_inhibs = ldba
         self.n_decoys = ldbi
         self.max_EF = 1 / (self.n_inhibs / (self.n_inhibs + self.n_decoys))
-        self.phar = utils.read_pharmacophores(querys)
-        self.phar_modified = utils.read_pharmacophores(querys)
+        self.phar = ET.parse(querys)
+        self.phar_modified = ET.parse(querys)
         self.read_featureIds()
-        self.initial_os = self.get_observation(initial=True)
         self.counter = 0
         self.render_mode = render_mode
         self.verbose = verbose
         self.episode_length = ep_length
         self.delta = delta
-        
         anvec = 0
+        self.timings = []
+        self.initial_os = self.get_observation(initial=True)
+        self.last_observation = self.initial_os
         log_features = []
         for i in range(len(self.featureIds)): 
             if i==0 or i==3:
@@ -77,6 +80,7 @@ class PharmacophoreEnv(gym.Env):
                 for id in self.featureIds[i]:
                     doubledIDs.extend([id+"_orgin", id+"_target"])
                 log_features.extend(doubledIDs)
+
         if hybrid_reward:
             self.hybrid_reward = True
             if os.path.exists(buffer_path):
@@ -86,10 +90,15 @@ class PharmacophoreEnv(gym.Env):
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
                 self.replay_buffer.to_csv(buffer_path, index=False)
-        self.timings = []
+
         # Define action and observation space
-        self.action_space = spaces.Discrete(anvec)
+        if self.action_space_type == "discrete":
+            self.action_space = spaces.Discrete(anvec)
+        if self.action_space_type == "box":
+            self.action_space = self.get_box_action_space()
         self.observation_space = spaces.Dict(self.get_observation_space())
+        
+        # TODO: transfer model specification to config file
         # approximator setup
         if self.enable_approximator:
             self.approximator = nn.Sequential(
@@ -104,7 +113,6 @@ class PharmacophoreEnv(gym.Env):
                 nn.Linear(32, 1),
             )
             self.approximator.load_state_dict(torch.load(approximator))
-
 
     def get_reward(self):
         """
@@ -131,6 +139,7 @@ class PharmacophoreEnv(gym.Env):
                 new_row = [ef+auc, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
                 return auc + ef, p, n
+        
 
     def refresh_buffer(self):
         self.replay_buffer.to_csv(self.buffer_path, index=False)
@@ -181,10 +190,10 @@ class PharmacophoreEnv(gym.Env):
     
     def step(self, action):
         # Execute one time step within the environment
-        self.phar_modified = utils.action_execution(action, self.featureIds, self.phar_modified, self.phar, self.delta)
+        self.action_execution(action)
 
         # new observation (state)
-        self.last_observation = self.get_observation(initial=False)        
+        self.last_observation = self.get_observation()        
         
         truncated = []
         # Truncated if episode exceeds timestep limit
@@ -198,8 +207,8 @@ class PharmacophoreEnv(gym.Env):
         for key in self.last_observation.keys():
             truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 0.5), 
                                                 np.all(self.last_observation[key] <= 5)))
-        truncated = np.any(truncated)
-        if truncated:
+
+        if np.any(truncated):
             self.reward = 0
         
         # Evaluate and calculate reward
@@ -227,75 +236,73 @@ class PharmacophoreEnv(gym.Env):
 
         if self.verbose > 1: # verbosity level 2
             if terminated: print("terminated")
-            if truncated: print("truncated")
+            if np.any(truncated): print(truncated)
 
         if self.verbose > 2: # verbosity level 3
             if primary_: print("threshold of "+str(self.threshold)+" reached")
             if secondary_: print(f"10% ({self.n_inhibs/10}) and no neg")
         
-        return self.last_observation, self.reward, terminated, truncated, {}
+        return self.last_observation, self.reward, terminated, np.any(truncated), {}
     
     def reset(self, seed=None, options=None):
         super().reset()
         # Reset the state of the environment to an initial state
         self.counter = 0
-        self.phar_modified = None
+        self.phar_modified = self.phar
         return self.get_observation(initial=True), {}
     
     def get_observation(self, initial=False):
-        os_space = dict()
+        obs = dict()
         for i, f in zip(range(len(self.featureIds)),self.features):
             x = []              
             if initial:
                 if self.inference_mode == True:
                     for id in self.featureIds[i]:
-                        x.extend([utils.get_tol(self.phar, id)])
+                        x.extend([self.get_tol(id, initial=True)])
                     x = np.array(x, dtype=np.float64)
-                    os_space[f] = np.around(x.flatten(), decimals=1)
+                    obs[f] = np.around(x.flatten(), decimals=1)
                 else:
                     for id in self.featureIds[i]:
-                        x.extend([utils.get_tol(self.phar, id)])
+                        x.extend([self.get_tol(id, initial=True)])
                     x = np.array(x, dtype=np.float64)
                     rans = np.around(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), decimals=1)
-                    os_space[f] = rans
+                    obs[f] = rans
                     # write all rans to tree
                     if i==0 or i==3:
                         for i, id in enumerate(self.featureIds[i]):
-                            self.phar = utils.set_tol(self.phar, id, rans[i])
+                            self.set_tol(id=id, newval=rans[i], initial=True)
                     if i==1 or i==2:
                         for id in self.featureIds[i]:    
                             for j in range(0,len(self.featureIds[i])*2,2):
-                                self.phar = utils.set_tol(self.phar, id, rans[j], target="origin")
-                                self.phar = utils.set_tol(self.phar, id, rans[j+1], target="target")
+                                self.set_tol(id, rans[j], target="origin", initial=True)
+                                self.set_tol(id, rans[j+1], target="target", initial=True)
             else:
                 for id in self.featureIds[i]:
-                    x.extend([utils.get_tol(self.phar_modified, id)])
+                    x.extend([self.get_tol(id, initial=False)])
                 x = np.array(x, dtype=np.float64)
-                os_space[f] = np.around(x.flatten(), decimals=1)
-        return os_space
+                obs[f] = np.around(x.flatten(), decimals=2)
+        return obs
 
-    def write_values_to_tree(self, values, runtime=False):
+    def write_values_to_tree(self, values, initial=False):
         writes = 0
         for i in range(len(self.featureIds)):
             if i==0 or i==3:
-                for i, id in enumerate(self.featureIds[i]):
-                    self.phar = utils.set_tol(self.phar, id, values[i])
+                for id in self.featureIds[i]:
+                    self.set_tol(id, values[writes], initial=initial)
                     writes += 1
             if i==1 or i==2:
                 for id in self.featureIds[i]:    
-                    self.phar = utils.set_tol(self.phar, id, values[writes], target="origin")
-                    self.phar = utils.set_tol(self.phar, id, values[writes+1], target="target")
+                    self.set_tol(id, values[writes], target="origin", initial=initial)
+                    self.set_tol(id, values[writes+1], target="target", initial=initial)
                     writes += 2
-        if runtime:
-            self.phar_modified = self.phar
-    
+
     def get_observation_space(self):
         d = {}
         for i in range(len(self.featureIds)):
             feature = self.features[i]
             lower = self.bounds[i][0]
             upper = self.bounds[i][1]
-            
+
             if feature == "H": # or feature == "exclusion" 
                 up = [upper for _ in self.featureIds[i]]
                 down = [lower for _ in self.featureIds[i]]
@@ -305,8 +312,22 @@ class PharmacophoreEnv(gym.Env):
                 up = [upper for _ in range(len(self.featureIds[i])*2)]
                 down = [upper for _ in range(len(self.featureIds[i])*2)]
                 d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*2,), dtype=np.float32)
-        
+
         return d
+    
+    def get_box_action_space(self):
+        low = []
+        high = []
+        for i in range(len(self.featureIds)):
+            lower = self.bounds[i][0]
+            upper = self.bounds[i][1]
+            if self.features[i] == "H":
+                low.extend([lower for _ in self.featureIds[i]])
+                high.extend([upper for _ in self.featureIds[i]])
+            if self.features[i] == "HBA" or self.features[i] == "HBD":
+                low.extend([lower for _ in range(len(self.featureIds[i])*2)])
+                high.extend([upper for _ in range(len(self.featureIds[i])*2)])
+        return spaces.Box(low=np.array(low), high=np.array(high), dtype=np.float32)
 
     def read_featureIds(self):
         featureIds = []
@@ -357,7 +378,7 @@ class PharmacophoreEnv(gym.Env):
             for i, f in zip(range(len(self.featureIds)),self.features):
                 x = []
                 for id in self.featureIds[i]:
-                    x.extend([utils.get_tol(modified_phar, id)])
+                    x.extend([self.get_tol(id, initial=True)])
                 x = np.array(x, dtype=np.float32)
                 observation[f] = x.flatten()
             
@@ -386,13 +407,10 @@ class PharmacophoreEnv(gym.Env):
         if filename == None:
             filename = self.querys[:-4]+"_temp"+self.querys[-4:]
         
-        self.write_values_to_tree(observation, runtime=runtime)
+        self.write_values_to_tree(observation, initial=False)
 
         self.phar.write(filename, encoding="utf-8", xml_declaration=True)
         
-
-
-
     def render(self, fpr, tpr, auc, ef, mode="console"):
         fig = plt.figure(figsize=(10, 5))
         gs = gridspec.GridSpec(1, 2, width_ratios=[5, 1])
@@ -426,9 +444,141 @@ class PharmacophoreEnv(gym.Env):
         plt.savefig(f"../data/images/{int(time.time())}.png")
         plt.close()
     
+    def action_execution(self, action):
+        """
+        Execute an action 
+        either:
+        - add or subtract 0.1 to the tolerance of a feature
+        or:
+        - add or subtract 0.1 to the weight of a feature
+        :param action: action to execute
+        :return: Path to modified Phar file
+        """
+
+        Hm = 2
+        HBAm = 4
+        HBDm = 4
+        H = len(self.featureIds[0])*Hm
+        HBA = len(self.featureIds[1])*HBAm
+        HBD = len(self.featureIds[2])*HBDm
+        if self.action_space_type == "discrete":
+            if action < H:
+                d = action // Hm #feature number
+                r = action % Hm #0: tol+, 1: tol-
+                id = self.featureIds[0][d] #feature id
+                self.executor(r, id, False, self.delta)
+            if action >= H and action < H + HBA:
+                d = (action-H) // HBAm #feature number
+                r = (action-H) % HBAm #0: tol+, 1: tol-, 2: tol+, 3: tol-
+                id = self.featureIds[1][d] #feature id
+                self.executor(r, id, True, self.delta)
+            if action >= H + HBA:
+                d = (action-H-HBA) // HBDm #feature number
+                r = (action-H-HBA) % HBDm #0: tol+, 1: tol-, 2: tol+, 3: tol-
+                id = self.featureIds[2][d] #feature id
+                self.executor(r, id, True, self.delta)
+        if self.action_space_type == "box":
+            self.write_values_to_tree(action)
+
+    def executor(self, r, id, f=False, delta=0.1):
+        """
+        Outsourcing of execution code
+        :param r: action encoding
+        :param feature: feature id
+        :return: modified tree
+        """
+        if f:
+            tol_target, tol_origin = self.get_tol(id, initial=False)
+            match r:
+                case 0:
+                    self.set_tol(id, (float(tol_origin) + delta), target="origin", initial=False)
+                case 1:
+                    self.set_tol(id, (float(tol_origin) - delta), target="origin", initial=False)
+                case 2:
+                    self.set_tol(id, (float(tol_target) + delta), target="target", initial=False)
+                case 3:
+                    self.set_tol(id, (float(tol_target) - delta), target="target", initial=False)
+                case _:
+                    raise ValueError("No valid action specified")
+
+        else:
+            tol = self.get_tol(id, initial=False)
+            match r:
+                case 0:
+                    self.set_tol(id=id, newval=(float(tol) + delta), initial=False)
+                case 1:
+                    self.set_tol(id=id, newval=(float(tol) - delta), initial=False)
+                case _: 
+                    raise ValueError("No valid action specified")
+        
+    def set_tol(self, id, newval, target=None, initial=False):
+        """
+        Set tolerance of a feature
+        :param tree: tree of Phar file
+        :param id: featureId
+        :param newval: new tolerance value
+        :param target: target or origin, when dealing with HBA and HBD
+        :return: updated tree
+        """
+        newval = str(round(newval, 2))
+        if initial:
+            elm = self.phar.find(".//*[@featureId='"+id+"']")
+        else:    
+            elm = self.phar_modified.find(".//*[@featureId='"+id+"']")
+
+        flag = False
+        if (elm.get("name") == "H") or (elm.get("type") == "exclusion"):
+            elm.find("./position").set('tolerance', newval)
+            flag = True
+
+        if target == "target":
+            child = elm.find("./target")
+            child.set('tolerance', newval)
+            flag = True
+
+        if target == "origin":
+            child = elm.find("./origin")
+            child.set('tolerance', newval)
+            flag = True
+
+        if not flag:
+            raise ValueError("No valid target specified")
+
+    def set_weight(self, id, newval, initial=False):
+        """
+        Set weight of a feature
+        :param tree: tree of Phar file
+        :param id: featureId
+        :param newval: new weight value
+        :return: updated tree    
+        """
+        newval = str(round(newval, 2))
+        if initial:
+            elm = self.phar.find(".//*[@featureId='"+id+"']")
+        else:
+            elm = self.phar_modified.find(".//*[@featureId='"+id+"']")
+        elm.set("weight", newval)
+
+    def get_tol(self, id:str, initial=False):
+        """
+        Get tolerance and weight of a feature
+        :param tree: tree of Phar file
+        :param id: featureId
+        :return: tolerance and weight as separate values, when dealing with HBA and HBD, tolerance of target and origin as well as weight are returned
+        """
+        if initial:
+            elm = self.phar.find(".//*[@featureId='"+str(id)+"']")
+        else:
+            elm = self.phar_modified.find(".//*[@featureId='"+str(id)+"']")
+        
+        if (elm.get("name") == "H") or (elm.get("type") == "exclusion"):
+            child = elm.find("./position")
+            return float(child.get("tolerance"))
+        else:
+            child_target = elm.find("./target")
+            child_origin = elm.find("./origin")
+            return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
+
     def close(self):
         ...
-    
-    
-
 
