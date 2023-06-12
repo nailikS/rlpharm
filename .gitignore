@@ -135,7 +135,7 @@ data/
 runs/
 models/
 LS5/
-
+notebooks/
 # Spyder project settings
 .spyderproject
 .spyproject
