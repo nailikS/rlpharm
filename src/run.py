@@ -5,7 +5,7 @@ import time
 from stable_baselines3.common.monitor import Monitor
 import gymnasium as gym
 from gymnasium.envs.registration import register
-from stable_baselines3 import A2C, PPO, DQN
+from stable_baselines3 import A2C, PPO, DQN, SAC
 from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoModelImprovement
 #import dataGeneratorCallback as dgc
 from stable_baselines3.common.env_util import make_vec_env
@@ -30,11 +30,12 @@ register(
         "hybrid_reward": True,
         "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\3KOOCollection.csv",
         "inf_mode": False,
-        "threshold": 1.6,
+        "threshold": 1.55,
         "render_mode": "console",
         "verbose": 3,
         "ep_length": 100,
         "delta": 0.2,
+        "action_space_type": "discrete",
         },
 )
 env = gym.make("PharmacophoreEnv-v0")
