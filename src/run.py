@@ -10,6 +10,7 @@ from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnNoMod
 #import dataGeneratorCallback as dgc
 from stable_baselines3.common.env_util import make_vec_env
 
+query = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys\\sEH-1VJ5mod+3ANTmod_merged(Ref.3ANT)_LS_3.02.pml'
 register(
     # unique identifier for the env `name-version`
     id="PharmacophoreEnv-v0",
@@ -19,10 +20,11 @@ register(
     # Max number of steps per episode, using a `TimeLimitWrapper`
     kwargs={
         "output": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
-        "querys": r'C:\\Users\\kilia\\MASTER\\rlpharm\data\\querys\\3KOO_baseline.pml', 
+        "querys": query, 
         "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives_mini.ldb2',
         "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives_mini.ldb2",
         "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
+        "data_dir": "C:\\Users\\kilia\\MASTER\\rlpharm\\data\\",
         "ldba": 36,
         "ldbi": 112,
         "features": "H,HBA,HBD",
@@ -30,11 +32,11 @@ register(
         "hybrid_reward": True,
         "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\3KOOCollection.csv",
         "inf_mode": False,
-        "threshold": 1.55,
+        "threshold": 1.6,
         "render_mode": "console",
         "verbose": 3,
         "ep_length": 100,
-        "delta": 0.2,
+        "delta": 0.15,
         "action_space_type": "discrete",
         },
 )
@@ -51,6 +53,8 @@ eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_
 config = {"policy_type": "MultiInputPolicy", "total_timesteps": 10000}
 experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
 type = "DQN"
+bp = query.split('\\')[-1][:-4]
+action_space_type = "BOX"
 wandb.tensorboard.patch(root_logdir=f"runs/{experiment_name}")
 wandb.init(project="repharm", config=config, name=experiment_name, sync_tensorboard=True)
 
@@ -67,5 +71,6 @@ model.learn(config["total_timesteps"], log_interval=10,
         #dgc.CustomCallback(r"C:\Users\kilia\MASTER\rlpharm\data\approx.csv")
         ]
 )
-model.save(f"{type}_{experiment_name}")
+
+model.save(f"{type}_{action_space_type}_{bp}_{experiment_name}")
 wandb.finish()

@@ -25,7 +25,8 @@ class PharmacophoreEnv(gym.Env):
                  querys, 
                  actives_db, 
                  inactives_db, 
-                 approximator, 
+                 approximator,
+                 data_dir, 
                  ldba, 
                  ldbi, 
                  features, 
@@ -38,10 +39,12 @@ class PharmacophoreEnv(gym.Env):
                  verbose=0,
                  ep_length=100,
                  delta=0.1,
-                 action_space_type="discrete",
+                 action_space_type=None,
                  ):
         super().__init__()
-        self.action_space_type = action_space_type        
+        if action_space_type is None:
+            raise ValueError("action_space_type must be provided")
+        else: self.action_space_type = action_space_type        
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
         self.features = features.split(",")
@@ -80,7 +83,7 @@ class PharmacophoreEnv(gym.Env):
                 for id in self.featureIds[i]:
                     doubledIDs.extend([id+"_orgin", id+"_target"])
                 log_features.extend(doubledIDs)
-
+        self.hybrid_reward = False
         if hybrid_reward:
             self.hybrid_reward = True
             if os.path.exists(buffer_path):
@@ -89,13 +92,16 @@ class PharmacophoreEnv(gym.Env):
                     raise ValueError("Buffer columns do not match the pharmacophore provided")
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
-                self.replay_buffer.to_csv(buffer_path, index=False)
+                self.buffer_path = data_dir + querys.split("\\")[-1][:-3] + "csv"
+                self.replay_buffer.to_csv(self.buffer_path, index=False)
 
         # Define action and observation space
         if self.action_space_type == "discrete":
             self.action_space = spaces.Discrete(anvec)
+
         if self.action_space_type == "box":
             self.action_space = self.get_box_action_space()
+
         self.observation_space = spaces.Dict(self.get_observation_space())
         
         # TODO: transfer model specification to config file
@@ -138,8 +144,7 @@ class PharmacophoreEnv(gym.Env):
                 auc, ef, p, n = self.screening()
                 new_row = [ef+auc, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
-                return auc + ef, p, n
-        
+                return (auc*2 + ef)/3, p, n
 
     def refresh_buffer(self):
         self.replay_buffer.to_csv(self.buffer_path, index=False)
@@ -258,29 +263,31 @@ class PharmacophoreEnv(gym.Env):
             if initial:
                 if self.inference_mode == True:
                     for id in self.featureIds[i]:
-                        x.extend([self.get_tol(id, initial=True)])
-                    x = np.array(x, dtype=np.float64)
-                    obs[f] = np.around(x.flatten(), decimals=1)
+                        x.extend([*self.get_tol(id, initial=True)])
+                    x = np.array(x, dtype=np.float32)
+                    x[:] = np.around(x.flatten(), decimals=1)
+                    obs[f] = x
                 else:
                     for id in self.featureIds[i]:
-                        x.extend([self.get_tol(id, initial=True)])
-                    x = np.array(x, dtype=np.float64)
-                    rans = np.around(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), decimals=1)
-                    obs[f] = rans
+                        x.extend([*self.get_tol(id, initial=True)])
+                    x = np.array(x, dtype=np.float32)
+                    x[:] = np.around(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), decimals=1)
+                    obs[f] = x
                     # write all rans to tree
                     if i==0 or i==3:
                         for i, id in enumerate(self.featureIds[i]):
-                            self.set_tol(id=id, newval=rans[i], initial=True)
+                            self.set_tol(id=id, newval=x[i], initial=True)
                     if i==1 or i==2:
                         for id in self.featureIds[i]:    
                             for j in range(0,len(self.featureIds[i])*2,2):
-                                self.set_tol(id, rans[j], target="origin", initial=True)
-                                self.set_tol(id, rans[j+1], target="target", initial=True)
+                                self.set_tol(id, x[j], target="origin", initial=True)
+                                self.set_tol(id, x[j+1], target="target", initial=True)
             else:
                 for id in self.featureIds[i]:
-                    x.extend([self.get_tol(id, initial=False)])
-                x = np.array(x, dtype=np.float64)
-                obs[f] = np.around(x.flatten(), decimals=2)
+                    x.extend([*self.get_tol(id, initial=False)])
+                x = np.array(x, dtype=np.float32)
+                x[:] = np.around(x.flatten(), decimals=2)
+                obs[f] = x
         return obs
 
     def write_values_to_tree(self, values, initial=False):
@@ -302,16 +309,15 @@ class PharmacophoreEnv(gym.Env):
             feature = self.features[i]
             lower = self.bounds[i][0]
             upper = self.bounds[i][1]
-
             if feature == "H": # or feature == "exclusion" 
                 up = [upper for _ in self.featureIds[i]]
                 down = [lower for _ in self.featureIds[i]]
-                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i]),), dtype=np.float32)
+                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), dtype=np.float32)
             
             if feature == "HBA" or feature == "HBD":
                 up = [upper for _ in range(len(self.featureIds[i])*2)]
-                down = [upper for _ in range(len(self.featureIds[i])*2)]
-                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), shape=(len(self.featureIds[i])*2,), dtype=np.float32)
+                down = [lower for _ in range(len(self.featureIds[i])*2)]
+                d[feature] = spaces.Box(low=np.array(down), high=np.array(up), dtype=np.float32)
 
         return d
     
@@ -454,7 +460,6 @@ class PharmacophoreEnv(gym.Env):
         :param action: action to execute
         :return: Path to modified Phar file
         """
-
         Hm = 2
         HBAm = 4
         HBDm = 4
@@ -488,16 +493,16 @@ class PharmacophoreEnv(gym.Env):
         :return: modified tree
         """
         if f:
-            tol_target, tol_origin = self.get_tol(id, initial=False)
+            tol = self.get_tol(id, initial=False)
             match r:
                 case 0:
-                    self.set_tol(id, (float(tol_origin) + delta), target="origin", initial=False)
+                    self.set_tol(id, (float(tol[1]) + delta), target="origin", initial=False)
                 case 1:
-                    self.set_tol(id, (float(tol_origin) - delta), target="origin", initial=False)
+                    self.set_tol(id, (float(tol[1]) - delta), target="origin", initial=False)
                 case 2:
-                    self.set_tol(id, (float(tol_target) + delta), target="target", initial=False)
+                    self.set_tol(id, (float(tol[0]) + delta), target="target", initial=False)
                 case 3:
-                    self.set_tol(id, (float(tol_target) - delta), target="target", initial=False)
+                    self.set_tol(id, (float(tol[0]) - delta), target="target", initial=False)
                 case _:
                     raise ValueError("No valid action specified")
 
@@ -505,9 +510,9 @@ class PharmacophoreEnv(gym.Env):
             tol = self.get_tol(id, initial=False)
             match r:
                 case 0:
-                    self.set_tol(id=id, newval=(float(tol) + delta), initial=False)
+                    self.set_tol(id=id, newval=(float(tol[0]) + delta), initial=False)
                 case 1:
-                    self.set_tol(id=id, newval=(float(tol) - delta), initial=False)
+                    self.set_tol(id=id, newval=(float(tol[0]) - delta), initial=False)
                 case _: 
                     raise ValueError("No valid action specified")
         
@@ -573,11 +578,11 @@ class PharmacophoreEnv(gym.Env):
         
         if (elm.get("name") == "H") or (elm.get("type") == "exclusion"):
             child = elm.find("./position")
-            return float(child.get("tolerance"))
+            return [float(child.get("tolerance"))]
         else:
             child_target = elm.find("./target")
             child_origin = elm.find("./origin")
-            return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
+            return [float(child_target.get('tolerance')), float(child_origin.get('tolerance'))]
 
     def close(self):
         ...
