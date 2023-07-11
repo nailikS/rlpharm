@@ -5,7 +5,7 @@ import utils
 import os
 import customenv as ce
 
-def register_env(approx=False, hybrid=True, blueprint=None, action_space_type="discrete"):
+def register_env(approx=False, hybrid=False, blueprint=None, action_space_type="discrete"):
     if approx == True: hybrid = False
     if blueprint is None: raise ValueError("No blueprint specified in model-name")
     register(
@@ -27,7 +27,7 @@ def register_env(approx=False, hybrid=True, blueprint=None, action_space_type="d
             "enable_approximator": approx,
             "hybrid_reward": hybrid,
             "inf_mode": False,
-            "threshold": 1.55,
+            "threshold": 0.77,
             "render_mode": "console",
             "verbose": 3,
             "ep_length": 200,
@@ -36,7 +36,7 @@ def register_env(approx=False, hybrid=True, blueprint=None, action_space_type="d
             },
     )
 
-def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", starting_point=None, approx=False, hybrid=True):
+def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", starting_point=None, approx=False, hybrid=False):
     """
     Run experiment for all models in a specified folder.
     :param max_timesteps: maximum number of timesteps to run inference for each model
@@ -44,7 +44,7 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
     :param mode: "best" or "mean_best" (best pharmacophore or mean of rewards over all timesteps) 
     :param starting_point: starting point or initial pharmacophore as list of feature tolerances int the same order they are in the pml file
     :param approx: True: enables approximator model in inference steps, default: False
-    :param hybrid: True: saves all steps, states and rewards in a csv file, default: True
+    :param hybrid: True: saves all steps, states and rewards in a csv file, default: False
     """
     env=None
     if max_timesteps is None:
@@ -70,50 +70,10 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
         if filename.split("_")[1] == "BOX":
             register_env(approx=approx, hybrid=hybrid, blueprint=blueprint, action_space_type="box")
             env = gym.make(f"PharmacophoreEnv-v0-Eval-box")
-            # env = ce.PharmacophoreEnv(
-            #     output= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
-            #     querys= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys' + blueprint, 
-            #     actives_db= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2',
-            #     inactives_db= r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2",
-            #     approximator= r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
-            #     data_dir= "C:\\Users\\kilia\\MASTER\\rlpharm\\data\\",
-            #     ldba= 58, # 58|36
-            #     ldbi= 177, # 177|112
-            #     features= "H,HBA,HBD",
-            #     enable_approximator= approx,
-            #     hybrid_reward= hybrid,
-            #     inf_mode= False,
-            #     threshold= 1.55,
-            #     render_mode= "console",
-            #     verbose= 3,
-            #     ep_length= 200,
-            #     delta= 0.2,
-            #     action_space_type= "box"
-            # )
 
         elif filename.split("_")[1] == "DISCRETE":
             register_env(approx=approx, hybrid=hybrid, blueprint=blueprint, action_space_type="discrete")
             env = gym.make("PharmacophoreEnv-v0-Eval-discrete")
-            # env = ce.PharmacophoreEnv(
-            #     output= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
-            #     querys= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys' + blueprint, 
-            #     actives_db= r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2',
-            #     inactives_db= r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2",
-            #     approximator= r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
-            #     data_dir= "C:\\Users\\kilia\\MASTER\\rlpharm\\data\\",
-            #     ldba= 58, # 58|36
-            #     ldbi= 177, # 177|112
-            #     features= "H,HBA,HBD",
-            #     enable_approximator= approx,
-            #     hybrid_reward= hybrid,
-            #     inf_mode= False,
-            #     threshold= 1.55,
-            #     render_mode= "console",
-            #     verbose= 3,
-            #     ep_length= 200,
-            #     delta= 0.2,
-            #     action_space_type= "discrete"
-            # )
         else:
             raise ValueError("model-action-space-type must be specified in the filename as BOX or DISCRETE")
         
@@ -126,7 +86,8 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
             env.write_values_to_tree(starting_point, runtime=True)
         
         auc, ef, _, _ = env.screening()
-        replay_buffer = {"reward":auc+ef, "phar":obs}
+        replay_buffer = {"reward":(auc+auc+ef)/3, "phar":obs}
+        print(replay_buffer["reward"])
         accumulated_reward = 0
         n = 0
         END = False
@@ -152,7 +113,7 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
             erg[filename] = replay_buffer
 
         if mode == "mean_best":
-            erg[filename] = accumulated_reward/n
+            erg[filename] = {"reward": accumulated_reward/n, "phar": replay_buffer["phar"]}
     return erg
 
 def check_approximation(phar, env, temp_path):

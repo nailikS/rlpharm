@@ -1,3 +1,4 @@
+from datetime import datetime
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -16,10 +17,6 @@ import xml.etree.ElementTree as ET
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
-
-    # TODO: scoring function should utilize rocAUC
-    # TODO: Pharmacophore io functions need to be provided for direct access
-
     def __init__(self, 
                  output, 
                  querys, 
@@ -92,7 +89,7 @@ class PharmacophoreEnv(gym.Env):
                     raise ValueError("Buffer columns do not match the pharmacophore provided")
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
-                self.buffer_path = data_dir + querys.split("\\")[-1][:-3] + "csv"
+                self.buffer_path = data_dir + querys.split("\\")[-1][:-4] + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
                 self.replay_buffer.to_csv(self.buffer_path, index=False)
 
         # Define action and observation space
@@ -142,10 +139,11 @@ class PharmacophoreEnv(gym.Env):
                 return matching_rows.iloc[0, 0], matching_rows.iloc[0, 3], matching_rows.iloc[0, 4]
             else:
                 auc, ef, p, n = self.screening()
-                new_row = [ef+auc, auc, ef, p, n] + values
+                x = (auc*2 + ef)/3
+                new_row = [x, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
-                return (auc*2 + ef)/3, p, n
-
+                return x, p, n
+                     
     def refresh_buffer(self):
         self.replay_buffer.to_csv(self.buffer_path, index=False)
 
@@ -275,18 +273,19 @@ class PharmacophoreEnv(gym.Env):
                     obs[f] = x
                     # write all rans to tree
                     if i==0 or i==3:
-                        for i, id in enumerate(self.featureIds[i]):
-                            self.set_tol(id=id, newval=x[i], initial=True)
+                        for k, id in enumerate(self.featureIds[i]):
+
+                            self.set_tol(id=id, newval=np.round(x[k], decimals=1), initial=True)
                     if i==1 or i==2:
                         for id in self.featureIds[i]:    
-                            for j in range(0,len(self.featureIds[i])*2,2):
-                                self.set_tol(id, x[j], target="origin", initial=True)
-                                self.set_tol(id, x[j+1], target="target", initial=True)
+                            for j in range(0,int(len(self.featureIds[i]))*2,2):
+                                self.set_tol(id, np.round(x[j], decimals=1), target="origin", initial=True)
+                                self.set_tol(id, np.round(x[j+1], decimals=1), target="target", initial=True)
             else:
                 for id in self.featureIds[i]:
                     x.extend([*self.get_tol(id, initial=False)])
                 x = np.array(x, dtype=np.float32)
-                x[:] = np.around(x.flatten(), decimals=2)
+                x[:] = np.around(x.flatten(), decimals=1)
                 obs[f] = x
         return obs
 
@@ -585,5 +584,9 @@ class PharmacophoreEnv(gym.Env):
             return [float(child_target.get('tolerance')), float(child_origin.get('tolerance'))]
 
     def close(self):
-        ...
+        dirname = os.path.dirname(self.out_file)
+        for f in os.listdir(dirname):
+            if not f.endswith(".sdf"):
+                continue
+            os.remove(os.path.join(dirname, f))
 

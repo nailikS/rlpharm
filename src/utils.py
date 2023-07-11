@@ -6,6 +6,7 @@ import time
 import re
 import math
 import numpy as np
+import os
 
 def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     """
@@ -50,6 +51,7 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
         document = f.read()
         scores = extract_scores_from_file(document)
 
+    os.remove(output_file.replace("\\\\", "\\"))
     return hits, scores, pos, neg
 
 def extract_scores_from_file(document):
