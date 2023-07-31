@@ -19,7 +19,6 @@ def register_env(approx=False, hybrid=False, blueprint=None, action_space_type="
             "querys": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys' + blueprint, 
             "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2',
             "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2",
-            "approximator": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best.pt",
             "data_dir": "C:\\Users\\kilia\\MASTER\\rlpharm\\data\\",
             "ldba": 58, # 58|36
             "ldbi": 177, # 177|112
@@ -55,17 +54,7 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
     model = None
     filenames = os.listdir(model_folder_path)
     for filename in filenames:
-        match(filename[0:3]):
-            case "DQN":
-                model = DQN.load(model_folder_path + "\\" + filename)
-            case "PPO":
-                model = PPO.load(model_folder_path + "\\" + filename)
-            case "A2C":
-                model = A2C.load(model_folder_path + "\\" + filename)
-            case _:
-                raise ValueError("model must be of type DQN, PPO or A2C")
-
-
+        
         blueprint = '\\\\' + filename.split('_')[2] + '.pml'
         if filename.split("_")[1] == "BOX":
             register_env(approx=approx, hybrid=hybrid, blueprint=blueprint, action_space_type="box")
@@ -77,6 +66,16 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
         else:
             raise ValueError("model-action-space-type must be specified in the filename as BOX or DISCRETE")
         
+        match(filename[0:3]):
+            case "DQN":
+                model = DQN.load(path=model_folder_path + "\\" + filename, env=env)
+            case "PPO":
+                model = PPO.load(model_folder_path + "\\" + filename)
+            case "A2C":
+                model = A2C.load(model_folder_path + "\\" + filename)
+            case _:
+                raise ValueError("model must be of type DQN, PPO or A2C")
+            
         obs, _ = env.reset()
 
         if str(model.action_space) != str(env.action_space):
@@ -109,17 +108,17 @@ def run_experiment(max_timesteps=None, model_folder_path=None, mode="best", star
                 obs, _ = env.reset()
         if mode == "best":
             if approx:
-                replay_buffer["reward"] = str(replay_buffer["reward"]) + check_approximation(replay_buffer["phar"], env, temp_path)
+                replay_buffer["reward"] = str(replay_buffer["reward"]) + str(check_approximation(replay_buffer["phar"], env, blueprint))
             erg[filename] = replay_buffer
 
         if mode == "mean_best":
             erg[filename] = {"reward": accumulated_reward/n, "phar": replay_buffer["phar"]}
     return erg
 
-def check_approximation(phar, env, temp_path):
+def check_approximation(phar, env, blueprint):
 
     output_file = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist'
-    querys = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys\\sEH-1ZD5_mod5_LS_3.02_infer_best.pml'
+    query = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\querys' + '\\\\' + 'TMP' + blueprint + '.pml',
     actives_db = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2:active'
     inactives_db = r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2:inactive"
 
@@ -130,9 +129,9 @@ def check_approximation(phar, env, temp_path):
     else:
         values = phar
     
-    env.obs_to_pml(values, temp_path, runtime=True)
-    auc, ef = env.scoring(*utils.exec_vhts(output_file, querys, actives_db, inactives_db))
+    env.obs_to_pml(values, query)
+    auc, ef = env.scoring(*utils.exec_vhts(output_file, query, actives_db, inactives_db))
     print(phar)
-    print(f"Reward: {auc+ef}")
+    print(f"Reward: {(auc+auc+ef)/3}")
 
-    return auc+ef
+    return (auc+auc+ef)/3

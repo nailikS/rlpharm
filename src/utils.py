@@ -36,22 +36,24 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     hits = []
     pos = 0
     neg = 0
-    with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
-        for line in f:
-            if line.endswith('active\n'):
-                hits.append(1)
-                pos += 1
-            if line.endswith('decoy\n'):
-                hits.append(0)
-                neg += 1
+    if os.path.exists(output_file.replace("\\\\", "\\")):
+        with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
+            for line in f:
+                if line.endswith('active\n'):
+                    hits.append(1)
+                    pos += 1
+                if line.endswith('decoy\n'):
+                    hits.append(0)
+                    neg += 1
 
-    if verbose == 1: print('\n'.join(timings))
+        if verbose == 1: print('\n'.join(timings))
 
-    with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
-        document = f.read()
-        scores = extract_scores_from_file(document)
+        with open(file=output_file.replace("\\\\", "\\"), mode='r') as f:
+            document = f.read()
+            scores = extract_scores_from_file(document)
 
-    os.remove(output_file.replace("\\\\", "\\"))
+        os.remove(output_file.replace("\\\\", "\\"))
+    else: return [0], [0], 0, 0
     return hits, scores, pos, neg
 
 def extract_scores_from_file(document):
@@ -180,7 +182,6 @@ def get_tol(tree, id:str):
         child_target = elm.find("./target")
         child_origin = elm.find("./origin")
         return float(child_target.get('tolerance')), float(child_origin.get('tolerance'))
-
 
 def action_execution(action, featureIds, tree, initial_tree, delta, action_space):
     """

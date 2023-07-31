@@ -4,16 +4,16 @@ from datetime import datetime
 
 run_folder = r"C:\Users\kilia\MASTER\rlpharm\data\experiments"
 erg = mt.run_experiment(max_timesteps=100, 
-                        model_folder_path=r"C:\Users\kilia\MASTER\rlpharm\data\model-eval", 
+                        model_folder_path=r"C:\Users\kilia\MASTER\rlpharm\data\model-eval\single", 
                         mode="best",
                         approx=False, 
-                        hybrid=True)
+                        hybrid=False)
 
 #loop over dict keys
 dfs = []
 exp_name = f'\\exp_{datetime.now().strftime("%Y_%m_%d-%I_%M")}.csv'
 for key in erg.keys():
-    d = {}
+    d = {} 
     d['model'] = key
     d["type"] = key[0:3]
     d['reward'] = erg[key]['reward']

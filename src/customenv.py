@@ -14,6 +14,7 @@ import matplotlib.gridspec as gridspec
 import os.path
 #from itertools import chain
 import xml.etree.ElementTree as ET
+import xgboost as xgb
 
 class PharmacophoreEnv(gym.Env):
     """Custom Environment that follows gym interface."""
@@ -21,8 +22,7 @@ class PharmacophoreEnv(gym.Env):
                  output, 
                  querys, 
                  actives_db, 
-                 inactives_db, 
-                 approximator,
+                 inactives_db,
                  data_dir, 
                  ldba, 
                  ldbi, 
@@ -31,17 +31,20 @@ class PharmacophoreEnv(gym.Env):
                  hybrid_reward=True,
                  buffer_path="../data/approxCollection.csv",
                  inf_mode=False,
-                 threshold=1.5,
+                 threshold=None,
                  render_mode="console",
                  verbose=0,
                  ep_length=100,
-                 delta=0.1,
+                 delta=None,
                  action_space_type=None,
+                 model_path=r'C:\Users\kilia\MASTER\rlpharm\notebooks\best_XGB.txt' 
                  ):
         super().__init__()
         if action_space_type is None:
             raise ValueError("action_space_type must be provided")
         else: self.action_space_type = action_space_type        
+        self.threshold = 0.76 if threshold == None else threshold
+        self.delta = 0.1 if delta == None else delta
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
         self.features = features.split(",")
@@ -64,7 +67,6 @@ class PharmacophoreEnv(gym.Env):
         self.render_mode = render_mode
         self.verbose = verbose
         self.episode_length = ep_length
-        self.delta = delta
         anvec = 0
         self.timings = []
         self.initial_os = self.get_observation(initial=True)
@@ -83,10 +85,11 @@ class PharmacophoreEnv(gym.Env):
         self.hybrid_reward = False
         if hybrid_reward:
             self.hybrid_reward = True
-            if os.path.exists(buffer_path):
-                self.replay_buffer = pd.read_csv(buffer_path)
-                if len(self.replay_buffer.columns)-5 != len(log_features):
-                    raise ValueError("Buffer columns do not match the pharmacophore provided")
+            if not os.path.exists(buffer_path):
+                raise AttributeError("to run in hybrid mode a buffer path needs to be specified!")
+            self.replay_buffer = pd.read_csv(buffer_path)
+            if len(self.replay_buffer.columns)-5 != len(log_features):
+                raise ValueError("Buffer columns do not match the pharmacophore provided")
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
                 self.buffer_path = data_dir + querys.split("\\")[-1][:-4] + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
@@ -104,18 +107,20 @@ class PharmacophoreEnv(gym.Env):
         # TODO: transfer model specification to config file
         # approximator setup
         if self.enable_approximator:
-            self.approximator = nn.Sequential(
-                nn.Linear(len(log_features), 256),
-                nn.ReLU(),
-                nn.Linear(256, 128),
-                nn.ReLU(),
-                nn.Linear(128, 64),
-                nn.ReLU(),
-                nn.Linear(64, 32),
-                nn.ReLU(),
-                nn.Linear(32, 1),
-            )
-            self.approximator.load_state_dict(torch.load(approximator))
+            # self.approximator = nn.Sequential(
+            #     nn.Linear(len(log_features), 256),
+            #     nn.ReLU(),
+            #     nn.Linear(256, 128),
+            #     nn.ReLU(),
+            #     nn.Linear(128, 64),
+            #     nn.ReLU(),
+            #     nn.Linear(64, 32),
+            #     nn.ReLU(),
+            #     nn.Linear(32, 1),
+            # )
+            # self.approximator.load_state_dict(torch.load(approximator))
+            self.approximator = xgb.XGBRegressor()
+            self.approximator.load_model(model_path)
 
     def get_reward(self):
         """
@@ -127,8 +132,8 @@ class PharmacophoreEnv(gym.Env):
             values = []
             for key in obs.keys():
                 values.extend(obs[key])
-            with torch.no_grad():
-                return self.approximator(torch.tensor(values, dtype=torch.float32)).item(), 1, 1
+            # print('shape is:' + str(np.array(values).reshape(1, -1).shape))
+            return self.approximator.predict(np.array(values).reshape(1, -1)), 1, 1
         if self.hybrid_reward:
             obs = self.last_observation
             values = []
@@ -139,9 +144,13 @@ class PharmacophoreEnv(gym.Env):
                 return matching_rows.iloc[0, 0], matching_rows.iloc[0, 3], matching_rows.iloc[0, 4]
             else:
                 auc, ef, p, n = self.screening()
-                x = (auc*2 + ef)/3
+                x = (auc*3 + ef)/4
                 new_row = [x, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
+                return x, p, n
+        else:
+                auc, ef, p, n = self.screening()
+                x = (auc*3 + ef)/4
                 return x, p, n
                      
     def refresh_buffer(self):
@@ -225,7 +234,7 @@ class PharmacophoreEnv(gym.Env):
         if not self.enable_approximator:
             secondary_ = (pos > self.n_inhibs//10 and neg == 0)
             # writes updated replay buffer to filesystem
-            if self.counter % 10 == 0:
+            if self.counter % 10 == 0 and self.hybrid_reward == True:
                 self.refresh_buffer()
         
         primary_ = (self.reward > self.threshold) 
@@ -405,7 +414,7 @@ class PharmacophoreEnv(gym.Env):
                     new.extend(map(str, values))
                     writer.writerow(new)
             
-    def obs_to_pml(self, observation, filename=None, runtime=False):
+    def obs_to_pml(self, observation, filename=None):
         """
         Writes observation to pml file
         """
@@ -413,8 +422,8 @@ class PharmacophoreEnv(gym.Env):
             filename = self.querys[:-4]+"_temp"+self.querys[-4:]
         
         self.write_values_to_tree(observation, initial=False)
-
-        self.phar.write(filename, encoding="utf-8", xml_declaration=True)
+        
+        self.phar_modified.write(filename, encoding="utf-8", xml_declaration=True)
         
     def render(self, fpr, tpr, auc, ef, mode="console"):
         fig = plt.figure(figsize=(10, 5))
