@@ -28,7 +28,7 @@ class PharmacophoreEnv(gym.Env):
                  ldbi, 
                  features, 
                  enable_approximator=False,
-                 hybrid_reward=True,
+                 hybrid_reward=None,
                  buffer_path="../data/approxCollection.csv",
                  inf_mode=False,
                  threshold=None,
@@ -48,7 +48,7 @@ class PharmacophoreEnv(gym.Env):
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
         self.features = features.split(",")
-        self.bounds = [np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32), np.array([1, 5], dtype=np.float32)]
+        self.bounds = [np.array([0, 7], dtype=np.float32), np.array([0, 7], dtype=np.float32), np.array([0, 7], dtype=np.float32)]
         self.codec = {"H":0, "HBA":1, "HBD":2}
         self.buffer_path = buffer_path
         self.threshold = threshold
@@ -82,17 +82,22 @@ class PharmacophoreEnv(gym.Env):
                 for id in self.featureIds[i]:
                     doubledIDs.extend([id+"_orgin", id+"_target"])
                 log_features.extend(doubledIDs)
-        self.hybrid_reward = False
-        if hybrid_reward:
+        if hybrid_reward == None:
+            self.hybrid_reward = False
+        if hybrid_reward == True:
             self.hybrid_reward = True
+            if buffer_path == None:
+                self.buffer_path = data_dir + querys.split("\\\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
+                self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
+                self.replay_buffer.to_csv(self.buffer_path, index=False)
             if not os.path.exists(buffer_path):
-                raise AttributeError("to run in hybrid mode a buffer path needs to be specified!")
+                raise ValueError("Buffer crea")
             self.replay_buffer = pd.read_csv(buffer_path)
             if len(self.replay_buffer.columns)-5 != len(log_features):
                 raise ValueError("Buffer columns do not match the pharmacophore provided")
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
-                self.buffer_path = data_dir + querys.split("\\")[-1][:-4] + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
+                self.buffer_path = data_dir + buffer_path.split("\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
                 self.replay_buffer.to_csv(self.buffer_path, index=False)
 
         # Define action and observation space
@@ -106,22 +111,24 @@ class PharmacophoreEnv(gym.Env):
         
         # TODO: transfer model specification to config file
         # approximator setup
-        if self.enable_approximator:
-            # self.approximator = nn.Sequential(
-            #     nn.Linear(len(log_features), 256),
-            #     nn.ReLU(),
-            #     nn.Linear(256, 128),
-            #     nn.ReLU(),
-            #     nn.Linear(128, 64),
-            #     nn.ReLU(),
-            #     nn.Linear(64, 32),
-            #     nn.ReLU(),
-            #     nn.Linear(32, 1),
-            # )
-            # self.approximator.load_state_dict(torch.load(approximator))
+        if self.enable_approximator == "xgb":
             self.approximator = xgb.XGBRegressor()
             self.approximator.load_model(model_path)
 
+        if self.enable_approximator == "linear":
+            self.approximator = nn.Sequential(
+                nn.Linear(len(log_features), 256),
+                nn.ReLU(),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, 32),
+                nn.ReLU(),
+                nn.Linear(32, 1),
+            )
+            self.approximator.load_state_dict(torch.load(model_path))
+    
     def get_reward(self):
         """
         Execute VHTS and calculate score
@@ -138,18 +145,22 @@ class PharmacophoreEnv(gym.Env):
             obs = self.last_observation
             values = []
             for key in obs.keys():
-                values.extend(obs[key])
+                values.extend(np.round(obs[key], decimals=2))
             matching_rows = self.replay_buffer.loc[(self.replay_buffer[self.replay_buffer.columns[5:]] == values).all(axis=1)]
             if not matching_rows.empty:
                 return matching_rows.iloc[0, 0], matching_rows.iloc[0, 3], matching_rows.iloc[0, 4]
             else:
                 auc, ef, p, n = self.screening()
+                if auc == 0 and ef == 0:
+                    return 0, 0, 0
                 x = (auc*3 + ef)/4
                 new_row = [x, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
                 return x, p, n
         else:
                 auc, ef, p, n = self.screening()
+                if auc == 0 and ef == 0:
+                    return 0, 0, 0
                 x = (auc*3 + ef)/4
                 return x, p, n
                      
@@ -167,6 +178,8 @@ class PharmacophoreEnv(gym.Env):
                                                 querys=self.temp_querys, 
                                                 actives_db=self.actives_db, 
                                                 inactives_db=self.inactives_db)
+        if hits == [0] and scores == [0] and pos == 0 and neg == 0:
+            return 0, 0, 0, 0
         return *self.scoring(hits, scores, pos, neg), pos, neg
 
     def scoring(self, hits, scores, pos, neg):
@@ -217,8 +230,8 @@ class PharmacophoreEnv(gym.Env):
 
         # check boundaries
         for key in self.last_observation.keys():
-            truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 0.5), 
-                                                np.all(self.last_observation[key] <= 5)))
+            truncated.append(not np.logical_and(np.all(self.last_observation[key] >= 0), 
+                                                np.all(self.last_observation[key] <= 7)))
 
         if np.any(truncated):
             self.reward = 0
@@ -272,29 +285,29 @@ class PharmacophoreEnv(gym.Env):
                     for id in self.featureIds[i]:
                         x.extend([*self.get_tol(id, initial=True)])
                     x = np.array(x, dtype=np.float32)
-                    x[:] = np.around(x.flatten(), decimals=1)
+                    x[:] = np.round(x.flatten(), decimals=1)
                     obs[f] = x
                 else:
                     for id in self.featureIds[i]:
                         x.extend([*self.get_tol(id, initial=True)])
                     x = np.array(x, dtype=np.float32)
-                    x[:] = np.around(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), decimals=1)
+                    x[:] = np.round(np.random.uniform(low=self.bounds[i][0], high=self.bounds[i][1], size=(len(x.flatten()),)), 2)
                     obs[f] = x
                     # write all rans to tree
                     if i==0 or i==3:
                         for k, id in enumerate(self.featureIds[i]):
 
-                            self.set_tol(id=id, newval=np.round(x[k], decimals=1), initial=True)
+                            self.set_tol(id=id, newval=np.round(x[k], 2), initial=True)
                     if i==1 or i==2:
                         for id in self.featureIds[i]:    
                             for j in range(0,int(len(self.featureIds[i]))*2,2):
-                                self.set_tol(id, np.round(x[j], decimals=1), target="origin", initial=True)
-                                self.set_tol(id, np.round(x[j+1], decimals=1), target="target", initial=True)
+                                self.set_tol(id, np.round(x[j], 2), target="origin", initial=True)
+                                self.set_tol(id, np.round(x[j+1], 2), target="target", initial=True)
             else:
                 for id in self.featureIds[i]:
                     x.extend([*self.get_tol(id, initial=False)])
                 x = np.array(x, dtype=np.float32)
-                x[:] = np.around(x.flatten(), decimals=1)
+                x[:] = np.round(x.flatten(), decimals=1)
                 obs[f] = x
         return obs
 

@@ -1,3 +1,4 @@
+import random
 import subprocess
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -25,7 +26,7 @@ def exec_vhts(output_file, querys, actives_db, inactives_db, verbose=0):
     ilib = cmd["ilib"]
     cp = cmd["cp"]
     # get current time for naming the output file so consistency is ensured
-    datestring = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
+    datestring = random.randint(0, 99999999)
     output_file = output_file + '-{}.sdf'.format(datestring)  
     # timing of screening process
     start_time = time.time()

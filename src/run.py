@@ -23,21 +23,21 @@ def train1():
         kwargs={
             "output": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\hitlists\\hitlist', 
             "querys": query, 
-            "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives_mini.ldb2',
-            "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives_mini.ldb2",
+            "actives_db": r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2',
+            "inactives_db": r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2",
             "data_dir": "C:\\Users\\kilia\\MASTER\\rlpharm\\data\\",
-            "ldba": 36,
-            "ldbi": 112,
+            "ldba": 58,
+            "ldbi": 177,
             "features": "H,HBA,HBD",
             "enable_approximator": False,
             "hybrid_reward": True,
             "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\sEH-1ZD5-mod5-LS-3.02.csv",
             "inf_mode": False,
-            "threshold": 0.78,
+            "threshold": 0.79,
             "render_mode": "console",
             "verbose": 3,
             "ep_length": 100,
-            "delta": 0.2,
+            "delta": 0.25,
             "action_space_type": "discrete",
             },
     ) 
@@ -45,7 +45,7 @@ def train1():
     obs, _ = env.reset()
     env = Monitor(env)
 
-    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 20000}
+    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 30000}
     experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
     type = "PPO"
     bp = query.split('\\')[-1][:-4]
@@ -75,7 +75,7 @@ def train2():
     query = r'C:\Users\kilia\MASTER\rlpharm\data\querys\sEH-1ZD5-mod5-LS-3.02.pml'
     register(
         # unique identifier for the env `name-version`
-        id="PharmacophoreEnv-BOX",
+        id="PharmacophoreEnv-v1",
         # path to the class for creating the env
         entry_point="customenv:PharmacophoreEnv",
         max_episode_steps=200,
@@ -89,19 +89,19 @@ def train2():
             "ldba": 58,
             "ldbi": 177,
             "features": "H,HBA,HBD",
-            "enable_approximator": True,
+            "enable_approximator": False,
             "hybrid_reward": True,
-            "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\sEH-1ZD5-mod5-LS-3.02.csv",
+            "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\sEH-1ZD5-mod5-LS-3.02_p.csv",
             "inf_mode": False,
-            "threshold": 0.78,
+            "threshold": 0.79,
             "render_mode": "console",
             "verbose": 3,
             "ep_length": 100,
-            "delta": 0.2,
+            "delta": 0.3,
             "action_space_type": "discrete",
             },
     )
-    env = gym.make("PharmacophoreEnv-BOX")
+    env = gym.make("PharmacophoreEnv-v1")
     obs, _ = env.reset()
     env = Monitor(env)
 
@@ -111,7 +111,7 @@ def train2():
     #stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=5, min_evals=5, verbose=1)
     #eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_train_callback, verbose=1)
 
-    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 20000}
+    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 30000}
     experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
     type = "PPO"
     bp = query.split('\\')[-1][:-4]
@@ -136,15 +136,18 @@ def train2():
     env.close()
     wandb.finish()
 
-# def runInParallel(*fns):
-#   proc = []
-#   for fn in fns:
-#     p = Process(target=fn)
-#     p.start()
-#     proc.append(p)
-#   for p in proc:
-#     p.join()
-# if __name__ == '__main__':
-#     runInParallel(train1, train2)
-train1()
-train2()    
+
+def runInParallel(*fns):
+  proc = []
+  for fn in fns:
+    p = Process(target=fn)
+    p.start()
+    proc.append(p)
+  for p in proc:
+    p.join()
+
+if __name__ == '__main__':
+    runInParallel(train1, train2)
+
+# train1()
+# train2()    
