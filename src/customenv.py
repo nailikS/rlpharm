@@ -29,7 +29,7 @@ class PharmacophoreEnv(gym.Env):
                  features, 
                  enable_approximator=False,
                  hybrid_reward=None,
-                 buffer_path="../data/approxCollection.csv",
+                 buffer_path=None,
                  inf_mode=False,
                  threshold=None,
                  render_mode="console",
@@ -87,17 +87,17 @@ class PharmacophoreEnv(gym.Env):
         if hybrid_reward == True:
             self.hybrid_reward = True
             if buffer_path == None:
-                self.buffer_path = data_dir + querys.split("\\\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
+                self.buffer_path = data_dir + "buffer_data\\" + querys.split("\\\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
                 self.replay_buffer.to_csv(self.buffer_path, index=False)
             if not os.path.exists(buffer_path):
-                raise ValueError("Buffer crea")
+                raise ValueError("Buffer creation failed")
             self.replay_buffer = pd.read_csv(buffer_path)
             if len(self.replay_buffer.columns)-5 != len(log_features):
                 raise ValueError("Buffer columns do not match the pharmacophore provided")
             else:
                 self.replay_buffer = pd.DataFrame(columns=["score", "auc", "ef", "pos", "neg"]+log_features)
-                self.buffer_path = data_dir + buffer_path.split("\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
+                self.buffer_path = data_dir + "buffer_data\\" + buffer_path.split("\\")[-1][:-4] + '_' + datetime.now().strftime("%Y_%m_%d-%I_%M") + ".csv"
                 self.replay_buffer.to_csv(self.buffer_path, index=False)
 
         # Define action and observation space
