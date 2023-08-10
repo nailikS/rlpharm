@@ -53,5 +53,6 @@ def generate_samples():
     mt.random_sample_creation(7,1,5,10)
 
 
-#generate_samples()
-experiment_statistics()
+generate_samples()
+#experiment()
+#experiment_statistics()

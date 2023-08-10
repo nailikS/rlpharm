@@ -27,7 +27,7 @@ class PharmacophoreEnv(gym.Env):
                  ldba, 
                  ldbi, 
                  features, 
-                 enable_approximator=False,
+                 enable_approximator=None,
                  hybrid_reward=None,
                  buffer_path=None,
                  inf_mode=False,
@@ -37,7 +37,7 @@ class PharmacophoreEnv(gym.Env):
                  ep_length=100,
                  delta=None,
                  action_space_type=None,
-                 model_path=r'C:\Users\kilia\MASTER\rlpharm\notebooks\best_XGB.txt' 
+                 model_path=None
                  ):
         super().__init__()
         if action_space_type is None:
@@ -48,7 +48,7 @@ class PharmacophoreEnv(gym.Env):
         self.inference_mode = inf_mode
         self.enable_approximator = enable_approximator
         self.features = features.split(",")
-        self.bounds = [np.array([0, 7], dtype=np.float32), np.array([0, 7], dtype=np.float32), np.array([0, 7], dtype=np.float32)]
+        self.bounds = [np.array([0, 5], dtype=np.float32), np.array([0, 5], dtype=np.float32), np.array([0, 5], dtype=np.float32)]
         self.codec = {"H":0, "HBA":1, "HBD":2}
         self.buffer_path = buffer_path
         self.threshold = threshold
@@ -134,13 +134,15 @@ class PharmacophoreEnv(gym.Env):
         Execute VHTS and calculate score
         :return: score query pharmacophores against actives and inactives database        
         """
-        if self.enable_approximator:
+        if self.enable_approximator == "xgb":
             obs = self.last_observation
             values = []
             for key in obs.keys():
                 values.extend(obs[key])
-            # print('shape is:' + str(np.array(values).reshape(1, -1).shape))
-            return self.approximator.predict(np.array(values).reshape(1, -1)), 1, 1
+            print(values)
+            print('shape is:' + str(np.array(values).reshape(1, -1).shape))
+            excuse_me = np.array(values).reshape(1, -1)
+            return self.approximator.predict([excuse_me]), 0, 0
         if self.hybrid_reward:
             obs = self.last_observation
             values = []
@@ -151,17 +153,29 @@ class PharmacophoreEnv(gym.Env):
                 return matching_rows.iloc[0, 0], matching_rows.iloc[0, 3], matching_rows.iloc[0, 4]
             else:
                 auc, ef, p, n = self.screening()
-                if auc == 0 and ef == 0:
-                    return 0, 0, 0
-                x = (auc*3 + ef)/4
+                if ef == 1 and p < 5:
+                    ef = ef - ef * 1/p
+                x = (auc + ef) / (2 * n/5) if n > 0 else (auc + ef)/(2 * 1/6)
+                if p == 0 and n == 0:
+                    x = 0
+                if auc < 0.6:
+                    x = 0
+                if ef < 0.6:
+                    x = 0
                 new_row = [x, auc, ef, p, n] + values
                 self.replay_buffer.loc[len(self.replay_buffer)] = new_row
                 return x, p, n
         else:
                 auc, ef, p, n = self.screening()
-                if auc == 0 and ef == 0:
-                    return 0, 0, 0
-                x = (auc*3 + ef)/4
+                if ef == 1 and p < 5:
+                    ef = ef - ef * 1/p
+                x = (auc + ef) / (2 * n/5) if n > 0 else (auc + ef)/(2 * 1/6)
+                if p == 0 and n == 0:
+                    x = 0
+                if auc < 0.6:
+                    x = 0
+                if ef < 0.6:
+                    x = 0        
                 return x, p, n
                      
     def refresh_buffer(self):
@@ -252,6 +266,8 @@ class PharmacophoreEnv(gym.Env):
         
         primary_ = (self.reward > self.threshold) 
         terminated = (primary_ or secondary_)
+        if terminated:
+            self.refresh_buffer()
         self.counter += 1
         
         if self.verbose > 0: # verbosuty level 1

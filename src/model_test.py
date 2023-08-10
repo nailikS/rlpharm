@@ -1,5 +1,7 @@
+from concurrent.futures import ProcessPoolExecutor
 import gymnasium as gym
 from gymnasium.envs.registration import register
+from joblib import Parallel, delayed
 from stable_baselines3 import A2C, PPO, DQN
 import utils
 import os
@@ -9,6 +11,8 @@ import numpy as np
 from scipy.stats import ttest_ind
 from scipy.stats import levene
 from statsmodels.stats.power import TTestIndPower
+import itertools
+from tqdm import tqdm
 
 def register_env(approx=False, hybrid=False, blueprint=None, action_space_type="discrete", evalFlag=""):
     if approx == True: hybrid = False
@@ -164,6 +168,23 @@ def check_approximation(phar, env, blueprint):
 
     return (auc+auc+auc+ef)/4
 
+
+def screen_database(sample, output_file, query, actives_db, inactives_db, env):
+    # ... your database screening logic here ...
+    env.obs_to_pml(sample, query)
+    hits, scores, pos, neg = utils.exec_vhts(output_file, query, actives_db, inactives_db)
+    auc, ef = env.scoring(hits, scores, pos, neg)
+    if auc < 0.5:
+            auc = 0
+    if ef < 0.6:
+            ef = 0
+    reward = (auc*1.5 + ef)/2.5
+    result = sample + (reward,pos,neg)
+    return result
+
+# Use a ProcessPoolExecutor to run the function in parallel
+
+
 def random_sample_creation(n_feat, a, b, n_lists):
     register_env(approx=False, hybrid=False, blueprint="\\\\" + "sEH-1ZD5-mod5-LS-3.02.pml", action_space_type="discrete")
     env = gym.make(f"PharmacophoreEnv-v0-Eval-discrete")
@@ -173,20 +194,22 @@ def random_sample_creation(n_feat, a, b, n_lists):
     actives_db = r'C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\actives.ldb2:active'
     inactives_db = r"C:\\Users\\kilia\\MASTER\\rlpharm\\data\\ldb2s\\inactives.ldb2:inactive"
     
-    for idx in range(n_lists):
-        lists = []        
-        for _ in range(100):
-            # Generate a list of n random floats rounded to 2 decimal places
-            random_floats = [round(random.uniform(a, b), 1) for _ in range(n_feat)]
-            env.obs_to_pml(random_floats, query)
-            hits, scores, pos, neg = utils.exec_vhts(output_file, query, actives_db, inactives_db)
-            auc, ef = env.scoring(hits, scores, pos, neg)
-            reward = (auc+auc+auc+ef)/4
-            random_floats.append(reward)
-            lists.append(random_floats)
-        
-        df = pd.DataFrame(lists)
-        df.to_csv(r'C:\Users\kilia\MASTER\rlpharm\data\ran_1ZD5\random_'+ str(idx) + '.csv', index=False)
+    feature_1_values = [1]
+    feature_2_values = [3, 3.3, 3.6, 4, 4.3]
+    feature_3_values = [1]
+    feature_4_values = [1, 1.3, 1.6, 2, 2.3, 2.6, 3, 3.3]
+    feature_5_values = [2]
+    feature_6_values = [2]
+    feature_7_values = [2, 2.3, 2.6, 3]
+    results = []
+    # Create all possible samples
+    all_samples = list(itertools.product(feature_1_values, feature_2_values, feature_3_values, feature_4_values, feature_5_values, feature_6_values, feature_7_values))
+    print("total N of permutations: " + str(len(all_samples)))
+    results = Parallel(n_jobs=3)(delayed(screen_database)(sample, output_file, query, actives_db, inactives_db, env) for sample in tqdm(all_samples))
+    
+    df = pd.DataFrame(results)
+    df.to_csv(r'C:\Users\kilia\MASTER\rlpharm\data\ran_1ZD5\wombo_combo_fine.csv', index=False)
+    
 
 def stat_tests(list1, list2):
     info = []

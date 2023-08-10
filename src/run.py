@@ -29,24 +29,25 @@ def train1():
             "ldba": 58,
             "ldbi": 177,
             "features": "H,HBA,HBD",
-            "enable_approximator": False,
+            # "enable_approximator": "xgb",
             "hybrid_reward": True,
             "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\sEH-1ZD5-mod5-LS-3.02.csv",
             "inf_mode": False,
-            "threshold": 0.79,
+            "threshold": 0.75,
             "render_mode": "console",
             "verbose": 3,
             "ep_length": 100,
             "delta": 0.25,
             "action_space_type": "discrete",
+            "model_path": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best_XGB_new.json"
             },
     ) 
     env = gym.make("PharmacophoreEnv-v0")
     obs, _ = env.reset()
     env = Monitor(env)
 
-    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 30000}
-    experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
+    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 200000}
+    experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f") + "AI"
     type = "PPO"
     bp = query.split('\\')[-1][:-4]
     action_space_type = "DISCRETE"
@@ -68,7 +69,6 @@ def train1():
     )
 
     model.save(f"{type}_{action_space_type}_{bp}_{experiment_name}")
-    env.env.close()
     wandb.finish()
 
 def train2():
@@ -89,20 +89,22 @@ def train2():
             "ldba": 58,
             "ldbi": 177,
             "features": "H,HBA,HBD",
-            "enable_approximator": False,
+            #"enable_approximator": "xgb",
             "hybrid_reward": True,
             "buffer_path": r"C:\Users\kilia\MASTER\rlpharm\data\sEH-1ZD5-mod5-LS-3.02_p.csv",
             "inf_mode": False,
-            "threshold": 0.79,
+            "threshold": 0.75,
             "render_mode": "console",
             "verbose": 3,
             "ep_length": 100,
             "delta": 0.3,
             "action_space_type": "discrete",
+            "model_path": r"C:\Users\kilia\MASTER\rlpharm\data\models\approximator\best_XGB_new.json"
             },
     )
     env = gym.make("PharmacophoreEnv-v1")
     obs, _ = env.reset()
+    print(obs)
     env = Monitor(env)
 
     # Separate evaluation env
@@ -111,8 +113,8 @@ def train2():
     #stop_train_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=5, min_evals=5, verbose=1)
     #eval_callback = EvalCallback(eval_env, eval_freq=1000, callback_after_eval=stop_train_callback, verbose=1)
 
-    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 30000}
-    experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f")
+    config = {"policy_type": "MultiInputPolicy", "total_timesteps": 200000}
+    experiment_name = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%f") + "_AI"
     type = "PPO"
     bp = query.split('\\')[-1][:-4]
     action_space_type = "DISCRETE"
@@ -133,7 +135,7 @@ def train2():
     )
 
     model.save(f"{type}_{action_space_type}_{bp}_{experiment_name}")
-    env.close()
+
     wandb.finish()
 
 
